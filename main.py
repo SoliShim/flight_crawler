@@ -330,8 +330,7 @@ async def scrape_naver():
         page = await context.new_page() 
         # browser를 실행합니다. headless=False로 설정하면 브라우저가 실제로 열리는 것을 볼 수 있습니다.
         
-        #목적지 공항 저장할 변수
-        dest3 = 'TPE'
+
 
         # 네이버 항공권 웹사이트로 이동합니다.
         await page.goto("https://flight.naver.com/")
@@ -339,8 +338,25 @@ async def scrape_naver():
         #페이지 제목 출력
         print(f"페이지 제목: {await page.title()}")
 
+        await page.wait_for_load_state('load')  #충분히 기다리기
+        #~~~~~~~광고 나오면 닫기 시도~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        try:
+            # 광고 팝업이 실제로 있으면 클릭, 없으면 넘어감
+            ad_close_btn = page.get_by_role('button',name='7일간 보지 않기', exact=True)
+            if await ad_close_btn.count() > 0 and await ad_close_btn.first.is_visible():
+                print("광고 팝업 발견! 닫기 시도.")
+                await ad_close_btn.first.click()
+                await asyncio.sleep(0.5)    # 광고 닫은 후 잠깐 대기
+                print("광고 팝업 닫음.")
+            else:
+                print("광고 팝업 없음. 패스.")
+        except Exception as e:
+            print(f"광고 팝업 닫기 중 예외 발생: {e}")
+        #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
+        #목적지 공항 저장할 변수
+        dep3 = 'TPE'
         #요소 찾기 (로케이터)
         await page.get_by_text('도착지', exact=True).click() #exact=True는 정확히 일치하는 요소를 찾겠다는 의미
         await asyncio.sleep(generate_random_decimal())
@@ -348,16 +364,33 @@ async def scrape_naver():
         
         #검색창에 공항 이름 입력하기
         
-        dest3 = input("목적지 공항을 입력하세요(IATA 3자리 코드) : ")
-        await page.get_by_role('textbox', name='국가, 도시, 공항명 검색').type(dest3)
+        dep3 = input("목적지 공항을 입력하세요(IATA 3자리 코드) : ")
+        await page.get_by_role('textbox', name='국가, 도시, 공항명 검색').type(dep3)
         await asyncio.sleep(generate_random_decimal())
 
         #공항 결과가 뜨면 클릭하기
-        try : 
-            await page.get_by_text(dest3).first.click()
-            print("목적지가",dest3,"으로 설정되었습니다.")
+        try:
+            # 결과 리스트의 모든 <a> 태그 중 텍스트(공항 코드)가 dest3인 것 찾기
+            anchors = page.locator('a.searchResults_anchor__OXs_5')
+            count = await anchors.count()
+            clicked = False
+
+            for i in range(count):
+                anchor = anchors.nth(i)
+                # <b> 안에 dest3이 들어있는지 확인 (예: NRT, TPE 등)
+                if await anchor.inner_text() and dep3 in await anchor.inner_text():
+                    await anchor.scroll_into_view_if_needed()
+                    await anchor.click()
+                    clicked = True
+                    print("목적지가", dep3, "으로 설정되었습니다.")
+                    break
+
+            if not clicked:
+                print(f"{dep3}에 해당하는 목적지를 찾지 못했습니다.")
+
         except Exception as e:
-            print("목적지가 정상적으로 설정되지 못했습니다.")
+            print("목적지가 정상적으로 설정되지 못했습니다.", e)
+
             
         await asyncio.sleep(generate_random_decimal())
         
@@ -397,17 +430,28 @@ async def scrape_naver():
         await click_calendar_date(page, retyyyymm, retdd, start_from_visible=True) #날짜 선택하는 함수!    
 
 
-
+        #검색버튼 누르기
         await page.get_by_role('button', name='검색').click()
+        await page.wait_for_load_state('load')  #충분히 기다리기
 
 
 
+        #검색결과 스크린샷
+
+        await page.screenshot(path='SEL\tTO\t'+dep3+'.png', full_page=True)
+        print("검색결과가 스크린샷으로 저장되었습니다.")
+
+        #검색결과 HTML
+        content = await page.content()
+        # 파일로 저장
+        with open('SEL\tTO\t'+dep3+'.html', 'w', encoding='utf-8') as f:
+            f.write(content)
+        print("검색결과가 HTML으로 저장되었습니다.")
 
 
-
-
-        #await asyncio.sleep(5)
-        input("종료하시려면 엔터를 눌러주세요 : ")
+        print("\n\n이용해주셔서 감사합니다 :)")
+        await asyncio.sleep(5)
+        
 
         # browser를 닫습니다.
         await browser.close()
