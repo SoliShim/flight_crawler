@@ -1,10 +1,7 @@
-import numpy as np
-# b = [1,2,3,4,5,6,7,8,9,10]
-# a = np.array(b)
-# print(b)
-# print(a)
+import datetime
 
+def year_month():
+    now = str(datetime.date.today())
+    return str(int(now[8:]))
 
-stripe = np.zeros((6,6),dtype=int)
-stripe[2:4,:]=1
-print(stripe)
+print(year_month())
