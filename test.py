@@ -257,39 +257,45 @@ async def click_calendar_date(page, target_month, target_day, start_from_visible
     print(f"✗ {target_month}에서 {target_day}일을 클릭하지 못했습니다.")
     return False
 
-# --- (수정) 가장 빠르고 안정적인 버전의 wait_for_flight_results ---
+# (이 함수는 현재 scrape_naver 에서는 사용되지 않음)
 async def wait_for_flight_results(page):
     """
-    항공권 검색 결과 페이지의 로딩을 안정적으로 대기하는 함수
-    (수정) 스피너가 사라지는 것만 확인. 항목별 대기는 스크래핑 함수로 위임.
+    (구 버전) 항공권 검색 결과 페이지의 로딩을 안정적으로 대기하는 함수
     """
     print("\n[Wait] 항공권 검색 결과 로딩 중...")
     try:
         # 1. 로딩 스피너(빙글빙글 도는 아이콘)가 사라질 때까지 대기 (최대 30초)
         spinner_locator = page.locator('div[class*="loading"]')
         await spinner_locator.wait_for(state='hidden', timeout=30000)
-        print("✓ 로딩 스피너 사라짐. 즉시 스크래핑 시작.")
+        print("✓ 로딩 스피너 사라짐")
 
-        # --- 불필요한 대기 모두 제거 ---
-        # 2. 첫 번째 항공권 아이템 대기 (제거)
-        # 3. networkidle 대기 (제거)
-        # 4. 1.5초 sleep (제거)
-        #    -> scrape_flights_native 함수가 항목별로 스크롤/대기하므로 불필요.
-        # ------------
+        # 2. 첫 번째 항공권 아이템이 렌더링될 때까지 대기 (최대 10초)
+        try:
+            first_item_locator = page.locator('div.combination_ConcurrentItemContainer__uUEbl').first
+            await first_item_locator.wait_for(state='visible', timeout=10000)
+            print("✓ 첫 번째 항공권 아이템 표시됨")
+        except TimeoutError:
+            print("⚠ '첫 번째 항목' 대기 시간(10초) 초과. 스크래핑을 계속 진행합니다.")
+
+        # 3. networkidle 대기 (최대 10초)
+        try:
+            await page.wait_for_load_state('networkidle', timeout=10000)
+            print("✓ Network Idle 상태 도달")
+        except TimeoutError:
+            print("⚠ 'networkidle' 대기 시간(10초) 초과. 스크래핑을 계속 진행합니다.")
 
     except Exception as e:
         print(f"✗ 항공권 검색 결과 대기 중 오류 발생: {e}")
-        
-        # 스크린샷 오류가 전체를 중단시키지 않도록 try/except 추가
         try:
             await page.screenshot(path='./error_wait_for_results.png')
             print("오류 발생 시점의 스크린샷을 'error_wait_for_results.png'로 저장했습니다.")
         except Exception as screenshot_e:
-            print(f"✗ 오류 스크린샷 저장 실패 (페이지가 응답하지 않음): {screenshot_e}")
+             print(f"✗ 오류 스크린샷 저장 실패: {screenshot_e}")
         
-        # 스피너 대기 실패는 치명적이므로 오류 발생
-        print("--- 스피너 대기 실패. 스크래핑을 중단합니다. ---")
-        raise # 오류를 상위로 전달하여 스크래핑 중단
+        # 스피너 대기 실패 외에는 계속 진행
+        if "spinner" in str(e):
+             print("--- 스피너 대기 실패. 스크래핑을 중단합니다. ---")
+             raise # 오류를 상위로 전달하여 스크래핑 중단
 
 
 async def scrape_flights_native(page, max_items_to_scrape=30): # max_items_to_scrape 매개변수 추가
@@ -881,8 +887,24 @@ async def scrape_naver():
         await page.get_by_role('button', name='검색', exact=True).click()
 
         # --- 중요: 여기가 수정된 부분 ---
-        # 고정 대기(sleep) 대신, 결과가 로드될 때까지 '명시적 대기'
-        #await wait_for_flight_results(page)
+        # (새로운 수정) 대기 없이는 스크롤이 안되므로, '스피너'가 나타났다가
+        # 사라지는 것만 대기하여 로딩을 보장합니다. (가장 빠르고 안정적인 방법)
+        print("\n[Wait] 항공권 검색 시작... (스피너 대기 중)")
+        # try:
+        #     # (수정) "strict mode violation" 오류를 피하기 위해 가장 구체적인 스피너로 변경
+        #     spinner_locator = page.get_by_label("조건에 맞는 항공편 검색중")
+            
+        #     # 1. 스피너가 '나타날' 때까지 잠시 대기 (최대 5초)
+        #     await spinner_locator.wait_for(state='visible', timeout=5000)
+        #     print("✓ 검색 중... (스피너 표시됨)")
+        #     # 2. 스피너가 '사라질' 때까지 대기 (최대 30초)
+        #     await spinner_locator.wait_for(state='hidden', timeout=30000)
+        #     print("✓ 로딩 완료. 스크래핑 시작.")
+        # except TimeoutError as e:
+        #     print(f"✗ 로딩 스피너 대기 중 타임아웃: {e}")
+        #     print("--- 스피너가 예상대로 동작하지 않았습니다. 스크래핑을 시도합니다. ---")
+        #     # 스피너가 안보여도 일단 스크래핑은 시도
+        
         # -------------------------------
 
 
@@ -904,13 +926,13 @@ async def scrape_naver():
         os.makedirs('./result', exist_ok=True)
         
         # 파일명 생성
-        screenshot_filename = f'./result/SEL_TO_{arr3}_{depdate}-{retdate}.png'
+        #screenshot_filename = f'./result/SEL_TO_{arr3}_{depdate}-{retdate}.png'
         excel_filename = f'./result/SEL_TO_{arr3}_{depdate}-{retdate}.xlsx'
 
         #검색결과 스크린샷
         # --- (수정) full_page=True 제거 (스크린샷 크기 제한 오류 방지) ---
-        await page.screenshot(path=screenshot_filename)
-        print(f"✓ 검색결과가 스크린샷으로 저장되었습니다. ({screenshot_filename})")
+        #await page.screenshot(path=screenshot_filename)
+        #print(f"✓ 검색결과가 스크린샷으로 저장되었습니다. ({screenshot_filename})")
 
         # 엑셀로 저장
         saved_info.to_excel(excel_filename, index=False)
