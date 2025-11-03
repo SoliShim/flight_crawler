@@ -1,0 +1,248 @@
+async def scrape_naver():
+    """
+    네이버 항공권 사이트를 크롤링하는 함수
+    """
+    print("네이버 항공권 크롤링을 시작합니다...")
+    async with async_playwright() as p: 
+
+        #@@@ 변수 선언파트@@@@@@@@@@@@@@@@@@@@@@@@
+        
+        # 오늘 날짜 기준으로 기본값 설정
+        today = datetime.date.today()
+        default_dep_date = today + datetime.timedelta(days=1)
+        default_ret_date = today + datetime.timedelta(days=2)
+
+        depyyyymm = default_dep_date.strftime('%Y.%m.')
+        depdd = default_dep_date.day
+        retyyyymm = default_ret_date.strftime('%Y.%m.')
+        retdd = default_ret_date.day
+        
+        arr3_default = 'TPE'
+        depdate_default_str = default_dep_date.strftime('%Y%m%d')
+        retdate_default_str = default_ret_date.strftime('%Y%m%d')
+
+
+        #입력받기_________________(입력 필요 없으면 전체 주석처리)___________________________
+
+        ##공항 선택
+        while True:
+            arr3 = input(f"목적지 공항을 입력하세요(IATA 3자리 코드, 예: {arr3_default}) : ")
+            if not arr3: # 엔터만 치면 기본값 사용
+                arr3 = arr3_default
+                print(f"기본값 {arr3}을 사용합니다.")
+                break
+            
+            arr3 = arr3.upper() # 소문자를 대문자로
+            if arr3.isalpha() and len(arr3) == 3:
+                break
+            print("✗ 잘못된 형식입니다. 반드시 알파벳 3자리로 입력해주세요.")
+
+        ##출발일 선택
+        while True:
+            depdate = input(f"출발 연월일을 입력하세요(YYYYMMDD, 예: {depdate_default_str}) :")
+            if not depdate:
+                depdate = depdate_default_str
+                print(f"기본값 {depdate}를 사용합니다.")
+                break
+            if is_valid_date(depdate):
+                break
+            print("✗ 잘못된 날짜 형식입니다. YYYYMMDD (예: 20251104) 8자리 숫자로 올바르게 입력해주세요.")
+
+        #도착일 선택
+        while True:
+            retdate = input(f"도착 연월일을 입력하세요(YYYYMMDD, 예: {retdate_default_str}) :")
+            if not retdate:
+                retdate = retdate_default_str
+                print(f"기본값 {retdate}를 사용합니다.")
+            
+            if not is_valid_date(retdate):
+                print("✗ 잘못된 날짜 형식입니다. YYYYMMDD 8자리 숫자로 올바르게 입력해주세요.")
+                continue
+                
+            if depdate < retdate:
+                break
+            print("✗ 다시 입력 해주세요. 복귀일이 출발일보다 빠르거나 같을 수 없습니다.")
+
+        # --- 수정: max_items_to_scrape 입력 받기 ---
+        max_items_to_scrape_default = 30
+        while True:
+            max_items_input = input(f"스크래핑할 최대 항목 수를 입력하세요 (기본값: {max_items_to_scrape_default}) : ")
+            if not max_items_input:
+                max_items_to_scrape = max_items_to_scrape_default
+                print(f"기본값 {max_items_to_scrape}개를 사용합니다.")
+                break
+            
+            if max_items_input.isdigit() and int(max_items_input) > 0:
+                max_items_to_scrape = int(max_items_input)
+                break
+            print("✗ 잘못된 형식입니다. 0보다 큰 숫자로 입력해주세요.")
+        # -----------------------------------------
+
+        # 입력값을 날짜 형식 변수로 변환
+        depyyyymm = depdate[:4]+'.'+depdate[4:6]+'.'
+        depdd = int(depdate[6:])
+        retyyyymm = retdate[:4]+'.'+retdate[4:6]+'.'
+        retdd = int(retdate[6:])
+        
+        #___________입력 끝_____________________________________________________________________________
+
+
+        profile = generate_random_profile()
+        print_profile_info(profile)
+
+        
+        browser = await p.firefox.launch(headless=False)
+        #await의 의미는 실행 하고 I\O작업이 끝날때까지 대기하라는 의미
+        #await이 없으면 안 된다!
+
+        # 랜덤 프로필을 context에 적용
+        context = await browser.new_context(
+            user_agent=profile['user_agent'],
+            locale=profile['locale'],
+            timezone_id=profile['timezone_id'],
+            viewport=profile['viewport'],
+        )
+
+        page = await context.new_page() 
+        # browser를 실행합니다. headless=False로 설정하면 브라우저가 실제로 열리는 것을 볼 수 있습니다.
+
+
+        # 네이버 항공권 웹사이트로 이동합니다.
+        await page.goto("https://flight.naver.com/")
+        print("네이버 항공권 페이지에 접속했습니다.")
+        #페이지 제목 출력
+        print(f"페이지 제목: {await page.title()}")
+
+        #~~~~~~~광고 나오면 닫기 시도~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        try:
+            # 시도 1: '오늘 하루 보지 않기' 등 텍스트 기반 닫기 버튼
+            # 특정 클래스 이름 대신 텍스트로 찾는 것이 더 견고할 수 있음
+            close_popup_button = page.get_by_role("button", name=re.compile("오늘 하루 보지 않기|다시 보지 않기|7일간 보지 않기|닫기"))
+            if await close_popup_button.count() > 0:
+                await close_popup_button.first.click(timeout=3000)
+                print("✓ 텍스트 기반 팝업 닫기 버튼 클릭")
+            else:
+                 # 시도 2: 'x' 또는 'close' 포함하는 버튼 (aria-label 등)
+                close_icon_button = page.locator("button[class*='close'], button[aria-label*='닫기'], button[aria-label*='close']")
+                if await close_icon_button.count() > 0:
+                    await close_icon_button.first.click(timeout=3000)
+                    print("✓ 아이콘(X) 팝업 닫기 버튼 클릭")
+                else:
+                    print("... 광고 팝업이 발견되지 않았거나, 다른 유형의 팝업입니다.")
+            
+            await page.wait_for_timeout(500) # 닫기 후 잠시 대기
+
+        except Exception as e:
+            print(f"--- 광고 팝업 닫기 중 예외 발생 (무시하고 계속): {e} ---")
+        #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+
+        #요소 찾기 (로케이터)
+        await page.get_by_text('도착지', exact=True).click() #exact=True는 정확히 일치하는 요소를 찾겠다는 의미
+        await asyncio.sleep(generate_random_short_delay())
+        
+        
+        #검색창에 공항 이름 입력하기
+                
+        await page.get_by_role('textbox', name='국가, 도시, 공항명 검색').type(arr3)
+        await asyncio.sleep(generate_random_short_delay())
+
+        #공항 결과가 뜨면 클릭하기
+        try:
+            # 결과 리스트의 모든 <a> 태그 중 텍스트(공항 코드)가 arr3인 것 찾기
+            anchors = page.locator('a.searchResults_anchor__OXs_5')
+            count = await anchors.count()
+            clicked = False
+
+            if count == 0:
+                 print(f"--- {arr3} 검색 결과가 없습니다. (잠시 대기 후 재시도) ---")
+                 await asyncio.sleep(1.5) # 딜레이를 조금 더 줌
+                 count = await anchors.count()
+
+            for i in range(count):
+                anchor = anchors.nth(i)
+                # <b> 안에 arr3이 들어있는지 확인 (예: NRT, TPE 등)
+                anchor_text = await anchor.inner_text()
+                if anchor_text and arr3 in anchor_text.split(): # TPE (타오위안) 같은 형식
+                    await anchor.scroll_into_view_if_needed()
+                    await anchor.click()
+                    clicked = True
+                    print(f"✓ 목적지가 {arr3} ({anchor_text.splitlines()[0]}) (으)로 설정되었습니다.")
+                    break
+
+            if not clicked:
+                print(f"✗ {arr3}에 해당하는 목적지를 클릭하지 못했습니다.")
+
+        except Exception as e:
+            print(f"✗ 목적지 설정 중 오류 발생: {e}")
+
+            
+        await asyncio.sleep(generate_random_short_delay())
+        
+
+
+        #____playwright에서 마우스로 선택_________________________________________________________________
+        #가는날 선택      
+        await page.get_by_role('button', name='가는 날').click()
+        await page.mouse.wheel(0, 700)      #휠 아래로 조금 내리기
+        await asyncio.sleep(generate_random_short_delay()) 
+
+        await click_calendar_date(page, depyyyymm, depdd, start_from_visible=False) #날짜 선택하는 함수!       
+        await asyncio.sleep(generate_random_short_delay())
+
+        #오는날 선택
+        await click_calendar_date(page, retyyyymm, retdd, start_from_visible=True) #날짜 선택하는 함수!   
+
+        #검색버튼 누르기
+        # --- 수정: '검색' 이름의 버튼이 2개 발견되는 오류(strict mode violation) 해결 ---
+        await page.get_by_role('button', name='검색', exact=True).click()
+
+        # --- 중요: 여기가 수정된 부분 ---
+        # (새로운 수정) 대기 없이는 스크롤이 안되므로, '스피너'가 나타났다가
+        # 사라지는 것만 대기하여 로딩을 보장합니다. (가장 빠르고 안정적인 방법)
+        print("\n[Wait] 항공권 검색 시작... (스피너 대기 중)")
+        await wait_for_flight_results(page)
+        
+        # -------------------------------
+
+
+        #검색결과 df로 저장 시도
+
+        # --- 방법 1 (권장) ---
+        #saved_info = await scrape_flights_native(page, max_items_to_scrape) # max_items_to_scrape 전달
+        
+        # --- 방법 2 (수정된 evaluate) ---
+        saved_info = await scrape_flights_evaluate_fixed(page, max_items_to_scrape) # max_items_to_scrape 전달
+
+
+        print("\n--- 최종 결과 (상위 5개) ---")
+        print(saved_info.head())
+        print("--------------------------\n")
+
+        # --- 결과 저장 ---
+        # 폴더 생성
+        os.makedirs('./result', exist_ok=True)
+        
+        # 파일명 생성
+        #screenshot_filename = f'./result/SEL_TO_{arr3}_{depdate}-{retdate}.png'
+        excel_filename = f'./result/SEL_TO_{arr3}_{depdate}-{retdate}.xlsx'
+
+        #검색결과 스크린샷
+        # --- (수정) full_page=True 제거 (스크린샷 크기 제한 오류 방지) ---
+        #await page.screenshot(path=screenshot_filename)
+        #print(f"✓ 검색결과가 스크린샷으로 저장되었습니다. ({screenshot_filename})")
+
+        # 엑셀로 저장
+        saved_info.to_excel(excel_filename, index=False)
+        print(f"✓ 검색결과가 Excel 파일로 저장되었습니다. ({excel_filename})")
+
+
+        print("\n\n이용해주셔서 감사합니다 :)")
+        await asyncio.sleep(5)
+        
+        # input("슬퍼요ㅜㅜㅜ") # 디버깅 완료 후 주석 처리 권장
+        # browser를 닫습니다.
+        await browser.close()
+        
+        print("***크롤링을 종료합니다***")
