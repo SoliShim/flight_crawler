@@ -6,6 +6,43 @@ import re
 import os
 from utils import is_valid_date, generate_random_profile, print_profile_info, generate_random_short_delay
 
+
+##검색창에 공항 이름 입력하기
+async def insert_airport(page,airport3):
+        await page.get_by_role('textbox', name='국가, 도시, 공항명 검색').type(airport3)
+        await asyncio.sleep(generate_random_short_delay())
+
+        #공항 결과가 뜨면 클릭하기
+        try:
+            # 결과 리스트의 모든 <a> 태그 중 텍스트(공항 코드)가 arr3인 것 찾기
+            anchors = page.locator('a.searchResults_anchor__OXs_5')
+            count = await anchors.count()
+            clicked = False
+
+            if count == 0:
+                 print(f"--- {airport3} 검색 결과가 없습니다. (잠시 대기 후 재시도) ---")
+                 await asyncio.sleep(1.5) # 딜레이를 조금 더 줌
+                 count = await anchors.count()
+
+            for i in range(count):
+                anchor = anchors.nth(i)
+                # <b> 안에 arr3이 들어있는지 확인 (예: NRT, TPE 등)
+                anchor_text = await anchor.inner_text()
+                if anchor_text and airport3 in anchor_text.split(): # TPE (타오위안) 같은 형식
+                    await anchor.scroll_into_view_if_needed()
+                    await anchor.click()
+                    clicked = True
+                    print(f"✓ 목적지가 {airport3} ({anchor_text.splitlines()[0]}) (으)로 설정되었습니다.")
+                    break
+
+            if not clicked:
+                print(f"✗ {airport3}에 해당하는 목적지를 클릭하지 못했습니다.")
+
+        except Exception as e:
+            print(f"✗ 목적지 설정 중 오류 발생: {e}")            
+        await asyncio.sleep(generate_random_short_delay())
+
+
 ## 캘린더 안에서 월 찾기
 async def click_calendar_date(page, target_month, target_day, start_from_visible=True):
     """
@@ -164,6 +201,7 @@ async def click_calendar_date(page, target_month, target_day, start_from_visible
     print(f"✗ {target_month}에서 {target_day}일을 클릭하지 못했습니다.")
     return False
 
+#기다려!
 async def wait_for_flight_results(page):
     """
     항공권 검색 결과 페이지의 로딩을 안정적으로 대기하는 함수 (속도 최적화 버전)
@@ -179,12 +217,12 @@ async def wait_for_flight_results(page):
         await spinner_locator.wait_for(state='hidden', timeout=30000)
         print("✓ (1/2) 로딩 스피너 사라짐")
 
-        # 2. 첫 번째 항공권 아이템이 렌더링될 때까지 대기 (최대 15초)
+        # 2. 첫 번째 항공권 아이템이 렌더링될 때까지 대기 (최대 30초)
         #    이것이 스크래핑을 시작할 수 있는 '가장 중요한 신호'입니다.
         #    (기존 10초에서 15초로 약간 여유를 주어 네트워크 환경 대응)
         first_item_locator = page.locator('div.combination_ConcurrentItemContainer__uUEbl').first
         print("... (2/2) 첫 번째 항공권 아이템 표시 대기 중 (최대 15초)")
-        await first_item_locator.wait_for(state='visible', timeout=15000)
+        await first_item_locator.wait_for(state='visible', timeout=30000)
         print("✓ (2/2) 첫 번째 항공권 아이템 표시됨. 즉시 스크래핑을 시작합니다.")
 
         # [제거] 3. 'networkidle' 대기
@@ -317,7 +355,6 @@ async def scrape_flights_native(page, max_items_to_scrape=30): # max_items_to_sc
     print(f"✅ 총 {len(results_list)}개 항목 스크래핑 성공.")
     df = pd.DataFrame(results_list)
     return df
-
 
 #방법 2     JS 방법
 async def scrape_flights_evaluate_fixed(page, max_items_to_scrape=30): # max_items_to_scrape 인수를 받도록 수정
@@ -492,7 +529,6 @@ async def scrape_flights_evaluate_fixed(page, max_items_to_scrape=30): # max_ite
     return df
 
 #방법 3     하이브리드. 방법1+방법2
-
 async def scrape_flights_hybrid(page, max_items_to_scrape=30):
     """
     방법 3 (하이브리드): page.evaluate() + 이벤트 기반 대기
@@ -666,6 +702,7 @@ async def scrape_flights_hybrid(page, max_items_to_scrape=30):
     df = pd.DataFrame(flights_data)
     return df
 
+
 async def scrape_naver():
     """
     네이버 항공권 사이트를 크롤링하는 함수
@@ -678,22 +715,35 @@ async def scrape_naver():
         
         # 오늘 날짜 기준으로 기본값 설정
         today = datetime.date.today()
-        default_dep_date = today + datetime.timedelta(days=1)
-        default_ret_date = today + datetime.timedelta(days=2)
+        default_dep_date = today + datetime.timedelta(days=1)   #내일을 출발 기본일로
+        default_ret_date = today + datetime.timedelta(days=2)   #모레를 도착 기본일로
 
         depyyyymm = default_dep_date.strftime('%Y.%m.')
         depdd = default_dep_date.day
         retyyyymm = default_ret_date.strftime('%Y.%m.')
         retdd = default_ret_date.day
         
-        arr3_default = 'TPE'
-        depdate_default_str = default_dep_date.strftime('%Y%m%d')
-        retdate_default_str = default_ret_date.strftime('%Y%m%d')
-
+        dep3_default = 'ICN'    #출발 공항 3자리 코드
+        arr3_default = 'TPE'    #도착 공항 3자리 코드
+        depdate_default_str = default_dep_date.strftime('%Y%m%d')   #출발일 기본값 설정! 
+        retdate_default_str = default_ret_date.strftime('%Y%m%d')   #도착일 기본값 설정! 
 
         #입력받기_________________(입력 필요 없으면 전체 주석처리)___________________________
 
-        ##공항 선택
+        ##출발 공항 입력
+        while True:
+            dep3 = input(f"목적지 공항을 입력하세요(IATA 3자리 코드, 예: {dep3_default}) : ")
+            if not dep3: # 엔터만 치면 기본값 사용
+                dep3 = dep3_default
+                print(f"기본값 {dep3}을 사용합니다.")
+                break
+            
+            dep3 = dep3.upper() # 소문자를 대문자로
+            if dep3.isalpha() and len(dep3) == 3:
+                break
+            print("✗ 잘못된 형식입니다. 반드시 알파벳 3자리로 입력해주세요.")
+
+        ##도착 공항 입력
         while True:
             arr3 = input(f"목적지 공항을 입력하세요(IATA 3자리 코드, 예: {arr3_default}) : ")
             if not arr3: # 엔터만 치면 기본값 사용
@@ -706,18 +756,24 @@ async def scrape_naver():
                 break
             print("✗ 잘못된 형식입니다. 반드시 알파벳 3자리로 입력해주세요.")
 
-        ##출발일 선택
+
+        ##출발일 입력
         while True:
             depdate = input(f"출발 연월일을 입력하세요(YYYYMMDD, 예: {depdate_default_str}) :")
-            if not depdate:
+            if not depdate: #아무것도 압력하지 않으면 cuz. 파이썬에서 빈 문자열은 False이다.
                 depdate = depdate_default_str
                 print(f"기본값 {depdate}를 사용합니다.")
                 break
-            if is_valid_date(depdate):
-                break
-            print("✗ 잘못된 날짜 형식입니다. YYYYMMDD (예: 20251104) 8자리 숫자로 올바르게 입력해주세요.")
+            if not is_valid_date(depdate):
+                print("✗ 잘못된 날짜 형식입니다. YYYYMMDD 8자리 숫자로 올바르게 입력해주세요.")
+                continue
 
-        #도착일 선택
+            if today.strftime('%Y%m%d') < depdate:  #내일부터 출발 가능! 네이버 항공권 시스템 상 오늘 선택 불가.
+                break
+            print("✗  출발일이 오늘보다 빠를 수 없습니다. 다시 입력해 주세요.")
+
+
+        #도착일 입력
         while True:
             retdate = input(f"도착 연월일을 입력하세요(YYYYMMDD, 예: {retdate_default_str}) :")
             if not retdate:
@@ -732,7 +788,7 @@ async def scrape_naver():
                 break
             print("✗ 다시 입력 해주세요. 복귀일이 출발일보다 빠르거나 같을 수 없습니다.")
 
-        # --- 수정: max_items_to_scrape 입력 받기 ---
+        # 크롤링할 데이터 개수 입력
         max_items_to_scrape_default = 30
         while True:
             max_items_input = input(f"스크래핑할 최대 항목 수를 입력하세요 (기본값: {max_items_to_scrape_default}) : ")
@@ -755,10 +811,8 @@ async def scrape_naver():
         
         #___________입력 끝_____________________________________________________________________________
 
-
         profile = generate_random_profile()
         print_profile_info(profile)
-
         
         browser = await p.firefox.launch(headless=False)
         #await의 의미는 실행 하고 I\O작업이 끝날때까지 대기하라는 의미
@@ -805,50 +859,21 @@ async def scrape_naver():
             print(f"--- 광고 팝업 닫기 중 예외 발생 (무시하고 계속): {e} ---")
         #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-
-
-        #요소 찾기 (로케이터)
-        await page.get_by_text('도착지', exact=True).click() #exact=True는 정확히 일치하는 요소를 찾겠다는 의미
+        #______출발지 설정_______________________________________________________________________________________
+        ##출발지 공항 이름 입력하기
+        await page.locator('button.tabContent_route__EXyDz.select_City__mKbzk.select_start__zx2PH').click() ##요소 찾기 (로케이터)
+        # HTML에서 그대로 붙여넣기 하면 안되고 -> 태그.클래스값(단 붙여넣기 한 것 안의 띄어쓰기를 .으로 대체해야 함!)
+        # 띄어쓰기를 없애고 클래스 이름 앞에 모두 .을 붙입니다.
         await asyncio.sleep(generate_random_short_delay())
+        await insert_airport(page,dep3)
         
-        
-        #검색창에 공항 이름 입력하기
-                
-        await page.get_by_role('textbox', name='국가, 도시, 공항명 검색').type(arr3)
+        #______도착지 설정_______________________________________________________________________________________
+        ##도착지 공항 이름 입력하기
+        await page.locator('button.tabContent_route__EXyDz.select_City__mKbzk.select_end__pdCjg').click() ##요소 찾기 (로케이터)
+        # HTML에서 그대로 붙여넣기 하면 안되고 -> 태그.클래스값(단 붙여넣기 한 것 안의 띄어쓰기를 .으로 대체해야 함!)
+        # 띄어쓰기를 없애고 클래스 이름 앞에 모두 .을 붙입니다.
         await asyncio.sleep(generate_random_short_delay())
-
-        #공항 결과가 뜨면 클릭하기
-        try:
-            # 결과 리스트의 모든 <a> 태그 중 텍스트(공항 코드)가 arr3인 것 찾기
-            anchors = page.locator('a.searchResults_anchor__OXs_5')
-            count = await anchors.count()
-            clicked = False
-
-            if count == 0:
-                 print(f"--- {arr3} 검색 결과가 없습니다. (잠시 대기 후 재시도) ---")
-                 await asyncio.sleep(1.5) # 딜레이를 조금 더 줌
-                 count = await anchors.count()
-
-            for i in range(count):
-                anchor = anchors.nth(i)
-                # <b> 안에 arr3이 들어있는지 확인 (예: NRT, TPE 등)
-                anchor_text = await anchor.inner_text()
-                if anchor_text and arr3 in anchor_text.split(): # TPE (타오위안) 같은 형식
-                    await anchor.scroll_into_view_if_needed()
-                    await anchor.click()
-                    clicked = True
-                    print(f"✓ 목적지가 {arr3} ({anchor_text.splitlines()[0]}) (으)로 설정되었습니다.")
-                    break
-
-            if not clicked:
-                print(f"✗ {arr3}에 해당하는 목적지를 클릭하지 못했습니다.")
-
-        except Exception as e:
-            print(f"✗ 목적지 설정 중 오류 발생: {e}")
-
-            
-        await asyncio.sleep(generate_random_short_delay())
-        
+        await insert_airport(page,arr3)
 
 
         #____playwright에서 마우스로 선택_________________________________________________________________
@@ -880,35 +905,7 @@ async def scrape_naver():
         
         saved_info = pd.DataFrame() # 최종 결과를 담을 DataFrame 초기화
 
-        # try:
-        #     print(f"\n[시도 1/2] 방법 2: page.evaluate() (JavaScript) 스크래핑 (목표: {max_items_to_scrape}개)...")
-        #     saved_info = await scrape_flights_evaluate_fixed(page, max_items_to_scrape)
-            
-        #     if saved_info.empty:
-        #         print("⚠ (방법 2) 결과가 비어있습니다. 방법 1로 재시도합니다.")
-        #     else:
-        #         print("✅ (방법 2) 스크래핑 성공.")
-
-        # except Exception as e:
-        #     print(f"✗ (방법 2) 스크래핑 중 오류 발생: {e}")
-        #     print("... 방법 1로 재시도합니다.")
-        #     saved_info = pd.DataFrame() # 재시도를 위해 비워줌
-
-        # # Fallback 로직: 방법 2가 실패했거나(Exception), 결과가 비어있을 경우(empty)
-        # if saved_info.empty:
-        #     print(f"\n[시도 2/2] 방법 1: Playwright Native Locators 스크래핑 (목표: {max_items_to_scrape}개)...")
-        #     try:
-        #         saved_info = await scrape_flights_native(page, max_items_to_scrape)
-                
-        #         if saved_info.empty:
-        #              print("✗ (방법 1) 재시도 실패: 결과가 비어있습니다.")
-        #         else:
-        #             print("✅ (방법 1) 재시도 스크래핑 성공.")
-                    
-        #     except Exception as e2:
-        #         print(f"✗ (방법 1) 재시도 스크래핑도 실패했습니다: {e2}")
-        #         saved_info = pd.DataFrame() # 최종 실패 시 빈 DataFrame 보장
-
+        #3번 방법으로 실행.
         saved_info = await scrape_flights_hybrid(page, max_items_to_scrape=30)
 
         # --- (수정) 최종 결과 확인 및 저장 ---
@@ -920,19 +917,23 @@ async def scrape_naver():
             print("--------------------------\n")
 
             # --- 결과 저장 ---
-            os.makedirs('./result', exist_ok=True)
-            excel_filename = f'./result/SEL_TO_{arr3}_{depdate}-{retdate}.xlsx'
+            save_directory = './result'        #상위 디렉토리에 result에 저장
+            os.makedirs(save_directory, exist_ok=True)
             
-            saved_info.to_excel(excel_filename, index=False)
-            print(f"✓ 검색결과가 Excel 파일로 저장되었습니다. ({excel_filename})")
+            csv_filename = f'{save_directory}/{dep3}_TO_{arr3}_{depdate}-{retdate}.csv'
+            saved_info.to_csv(csv_filename, index=False, encoding='utf-8-sig')
+            print(f"✓ 검색결과가 CSV 파일로 저장되었습니다. ({csv_filename})")
+
+            #excel_filename = f'./result/SEL_TO_{arr3}_{depdate}-{retdate}.xlsx'
+            #saved_info.to_excel(excel_filename, index=False)
+            #print(f"✓ 검색결과가 Excel 파일로 저장되었습니다. ({excel_filename})")
         
         # --- (여기까지가 수정된 로직입니다) ---
 
 
         print("\n\n이용해주셔서 감사합니다 :)")
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
         
-        # input("슬퍼요ㅜㅜㅜ") # 디버깅 완료 후 주석 처리 권장
         # browser를 닫습니다.
         await browser.close() 
         

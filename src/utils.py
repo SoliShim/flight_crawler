@@ -62,7 +62,7 @@ def generate_random_decimal(min_val=0.5, max_val=3.0, decimal_places=4):
     return round(random_float, decimal_places)
 
 # --- 속도 향상을 위한 짧은 딜레이 함수 ---
-def generate_random_short_delay(min_val=0.3, max_val=1.2, decimal_places=4):
+def generate_random_short_delay(min_val=0.2, max_val=0.7, decimal_places=4):
     """봇 탐지를 피하기 위한 짧고 랜덤한 딜레이 생성"""
     random_float = random.uniform(min_val, max_val)
     return round(random_float, decimal_places)
@@ -85,7 +85,7 @@ def is_valid_date(date_string):
     if not (len(date_string) == 8 and date_string.isdigit()):
         return False
     try:
-        datetime.datetime.strptime(date_string, '%Y%m%d')
+        datetime.datetime.strptime(date_string, '%Y%m%d')   #월이 맞는지 확인
         return True
     except ValueError:
         return False
