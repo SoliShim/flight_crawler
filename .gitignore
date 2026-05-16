@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+build/
+dist/
+manual_backup/
+temp*.py
+temp.txt
+*.spec
+error_*.png
+result/*.csv
+result/*.xlsx

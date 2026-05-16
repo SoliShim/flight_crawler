@@ -7,40 +7,70 @@ import os
 from utils import is_valid_date, generate_random_profile, print_profile_info, generate_random_short_delay
 
 
+RESULT_ITEM_SELECTOR = 'div.combination_ConcurrentItemContainer__uUEbl'
+RESULT_PRICE_SELECTOR = '.item_num__aKbk4'
+
+
+def output_date_suffix(depdate, retdate, trip_type):
+    return f"{depdate}-oneway" if trip_type == "oneway" else f"{depdate}-{retdate}"
+
+
 ##검색창에 공항 이름 입력하기
-async def insert_airport(page,airport3):
-        await page.get_by_role('textbox', name='국가, 도시, 공항명 검색').type(airport3)
-        await asyncio.sleep(generate_random_short_delay())
+async def insert_airport(page, airport3, label="공항"):
+    await close_ad_popup_if_present(page)
+    search_box = page.get_by_role('textbox', name='국가, 도시, 공항명 검색').first
+    await search_box.wait_for(state='visible', timeout=10000)
+    await search_box.fill("")
+    await search_box.type(airport3)
+    await asyncio.sleep(generate_random_short_delay())
 
-        #공항 결과가 뜨면 클릭하기
+    #공항 결과가 뜨면 클릭하기
+    try:
+        # 결과 리스트의 모든 <a> 태그 중 텍스트(공항 코드)가 arr3인 것 찾기
+        anchors = page.locator('a[class*="searchResults_anchor"]')
         try:
-            # 결과 리스트의 모든 <a> 태그 중 텍스트(공항 코드)가 arr3인 것 찾기
-            anchors = page.locator('a.searchResults_anchor__OXs_5')
-            count = await anchors.count()
-            clicked = False
+            await anchors.first.wait_for(state='visible', timeout=5000)
+        except TimeoutError:
+            pass
+        count = await anchors.count()
+        clicked = False
 
-            if count == 0:
-                 print(f"--- {airport3} 검색 결과가 없습니다. (잠시 대기 후 재시도) ---")
-                 await asyncio.sleep(1.5) # 딜레이를 조금 더 줌
-                 count = await anchors.count()
+        if count == 0:
+             print(f"--- {airport3} 검색 결과가 없습니다. (잠시 대기 후 재시도) ---")
+             await asyncio.sleep(1.5) # 딜레이를 조금 더 줌
+             count = await anchors.count()
 
-            for i in range(count):
-                anchor = anchors.nth(i)
-                # <b> 안에 arr3이 들어있는지 확인 (예: NRT, TPE 등)
-                anchor_text = await anchor.inner_text()
-                if anchor_text and airport3 in anchor_text.split(): # TPE (타오위안) 같은 형식
-                    await anchor.scroll_into_view_if_needed()
-                    await anchor.click()
-                    clicked = True
-                    print(f"✓ 목적지가 {airport3} ({anchor_text.splitlines()[0]}) (으)로 설정되었습니다.")
-                    break
+        for i in range(count):
+            anchor = anchors.nth(i)
+            # <b> 안에 arr3이 들어있는지 확인 (예: NRT, TPE 등)
+            anchor_text = await anchor.inner_text()
+            if anchor_text and airport3 in anchor_text.split(): # TPE (타오위안) 같은 형식
+                await anchor.scroll_into_view_if_needed()
+                await anchor.click()
+                clicked = True
+                print(f"✓ {label}가 {airport3} ({anchor_text.splitlines()[0]}) (으)로 설정되었습니다.")
+                break
 
-            if not clicked:
-                print(f"✗ {airport3}에 해당하는 목적지를 클릭하지 못했습니다.")
+        if not clicked:
+            fallback = page.get_by_text(re.compile(rf"\b{re.escape(airport3)}\b")).first
+            if await fallback.count() > 0 and await fallback.is_visible():
+                link = fallback.locator("xpath=ancestor::a[1]")
+                if await link.count() > 0:
+                    await link.click()
+                else:
+                    await fallback.click()
+                clicked = True
+                print(f"✓ {label}가 {airport3} (으)로 설정되었습니다.")
 
-        except Exception as e:
-            print(f"✗ 목적지 설정 중 오류 발생: {e}")            
-        await asyncio.sleep(generate_random_short_delay())
+        if not clicked:
+            print(f"✗ {airport3}에 해당하는 {label}를 클릭하지 못했습니다.")
+            return False
+
+    except Exception as e:
+        print(f"✗ {label} 설정 중 오류 발생: {e}")
+        return False
+    await asyncio.sleep(generate_random_short_delay())
+    return clicked
 
 
 ## 캘린더 안에서 월 찾기
@@ -201,6 +231,99 @@ async def click_calendar_date(page, target_month, target_day, start_from_visible
     print(f"✗ {target_month}에서 {target_day}일을 클릭하지 못했습니다.")
     return False
 
+async def get_result_snapshot(page):
+    """
+    현재 렌더링된 항공권 결과 상태를 요약합니다.
+    네이버가 비동기로 가격/정렬을 갱신할 수 있으므로 count와 가격 fingerprint를 같이 봅니다.
+    """
+    return await page.evaluate(
+        """
+        ({ itemSelector, priceSelector }) => {
+            const items = Array.from(document.querySelectorAll(itemSelector));
+            const prices = items
+                .map((item) => item.querySelector(priceSelector)?.innerText?.trim() || "")
+                .filter(Boolean);
+
+            return {
+                itemCount: items.length,
+                pricedItemCount: prices.length,
+                firstPrice: prices[0] || "",
+                fingerprint: `${items.length}::${prices.slice(0, 30).join("|")}`,
+            };
+        }
+        """,
+        {
+            "itemSelector": RESULT_ITEM_SELECTOR,
+            "priceSelector": RESULT_PRICE_SELECTOR,
+        },
+    )
+
+
+async def wait_for_result_stability(
+    page,
+    min_wait_seconds=5.0,
+    stable_seconds=2.5,
+    max_wait_seconds=20.0,
+    interval_seconds=0.5,
+):
+    """
+    검색 결과가 일정 시간 동안 변하지 않을 때까지 기다립니다.
+    고정 sleep 대신 DOM에 표시된 항공권 개수와 상위 가격 목록을 기준으로 안정화를 판단합니다.
+    """
+    print(
+        f"... (3/3) 결과 안정화 대기 중 "
+        f"(최소 {min_wait_seconds:.0f}초, 최대 {max_wait_seconds:.0f}초)"
+    )
+
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    last_changed_at = started_at
+    last_fingerprint = None
+    last_snapshot = None
+    checkpoints = [3, 5, 7, 10, 15, 20]
+    printed_checkpoints = set()
+
+    while True:
+        now = loop.time()
+        elapsed = now - started_at
+        snapshot = await get_result_snapshot(page)
+        fingerprint = snapshot["fingerprint"]
+
+        if fingerprint != last_fingerprint:
+            last_fingerprint = fingerprint
+            last_changed_at = now
+            last_snapshot = snapshot
+
+        for checkpoint in checkpoints:
+            if elapsed >= checkpoint and checkpoint not in printed_checkpoints:
+                printed_checkpoints.add(checkpoint)
+                print(
+                    f"... {checkpoint}초 경과: "
+                    f"결과 {snapshot['itemCount']}개, "
+                    f"가격 표시 {snapshot['pricedItemCount']}개, "
+                    f"첫 가격 {snapshot['firstPrice'] or 'N/A'}"
+                )
+
+        stable_for = now - last_changed_at
+        has_prices = snapshot["pricedItemCount"] > 0
+        if elapsed >= min_wait_seconds and stable_for >= stable_seconds and has_prices:
+            print(
+                f"✓ 결과 안정화 완료: "
+                f"{snapshot['pricedItemCount']}개 가격 표시, "
+                f"{elapsed:.1f}초 대기"
+            )
+            return last_snapshot or snapshot
+
+        if elapsed >= max_wait_seconds:
+            print(
+                f"⚠ 최대 대기 시간 도달: "
+                f"{snapshot['pricedItemCount']}개 가격 표시 상태로 진행"
+            )
+            return snapshot
+
+        await asyncio.sleep(interval_seconds)
+
+
 #기다려!
 async def wait_for_flight_results(page):
     """
@@ -213,23 +336,27 @@ async def wait_for_flight_results(page):
         # 1. 로딩 스피너(빙글빙글 도는 아이콘)가 사라질 때까지 대기 (최대 30초)
         #    이것은 페이지가 최소한의 응답을 하고 로딩을 시작했다는 신호입니다.
         spinner_locator = page.locator('div[class*="loading"]')
-        print("... (1/2) 로딩 스피너 사라지기를 대기 중 (최대 30초)")
+        print("... (1/3) 로딩 스피너 사라지기를 대기 중 (최대 30초)")
         await spinner_locator.wait_for(state='hidden', timeout=30000)
-        print("✓ (1/2) 로딩 스피너 사라짐")
+        print("✓ (1/3) 로딩 스피너 사라짐")
 
         # 2. 첫 번째 항공권 아이템이 렌더링될 때까지 대기 (최대 30초)
         #    이것이 스크래핑을 시작할 수 있는 '가장 중요한 신호'입니다.
         #    (기존 10초에서 15초로 약간 여유를 주어 네트워크 환경 대응)
-        first_item_locator = page.locator('div.combination_ConcurrentItemContainer__uUEbl').first
-        print("... (2/2) 첫 번째 항공권 아이템 표시 대기 중 (최대 15초)")
+        first_item_locator = page.locator(RESULT_ITEM_SELECTOR).first
+        print("... (2/3) 첫 번째 항공권 아이템 표시 대기 중 (최대 30초)")
         await first_item_locator.wait_for(state='visible', timeout=30000)
-        print("✓ (2/2) 첫 번째 항공권 아이템 표시됨. 즉시 스크래핑을 시작합니다.")
+        print("✓ (2/3) 첫 번째 항공권 아이템 표시됨.")
 
-        # [제거] 3. 'networkidle' 대기
-        #  - 백그라운드 요청(광고, 분석) 때문에 불필요하게 10초를 대기하는 주된 원인이므로 제거합니다.
-        
-        # [제거] 4. 'asyncio.sleep(1.5)' 고정 대기
-        #  - scrape_flights_native() 함수가 이미 각 항목을 스크롤하고 기다리므로 불필요합니다.
+        min_wait_seconds = float(os.getenv("NAVER_RESULT_MIN_WAIT_SECONDS", "5"))
+        stable_seconds = float(os.getenv("NAVER_RESULT_STABLE_SECONDS", "2.5"))
+        max_wait_seconds = float(os.getenv("NAVER_RESULT_MAX_WAIT_SECONDS", "20"))
+        await wait_for_result_stability(
+            page,
+            min_wait_seconds=min_wait_seconds,
+            stable_seconds=stable_seconds,
+            max_wait_seconds=max_wait_seconds,
+        )
 
     except TimeoutError as e:
         # 타임아웃 오류를 좀 더 명확하게 구분
@@ -245,295 +372,81 @@ async def wait_for_flight_results(page):
         raise # 오류를 상위로 전달하여 스크래핑 중단
 
 
-#방법 1     Playwright 네이티브 방법
-async def scrape_flights_native(page, max_items_to_scrape=30): # max_items_to_scrape 매개변수 추가
+async def close_ad_popup_if_present(page):
     """
-    방법 1 (권장): Playwright Locator 네이티브 방식으로 스크래핑
-    - 수정: 30개 항목을 목표로 순차적 스크롤 및 스크래핑
+    네이버 항공권의 광고/안내 팝업이 화면을 덮으면 닫습니다.
+    페이지 안에는 숨겨진 닫기 버튼도 많아서, 실제 팝업 영역 안의 보이는 요소만 클릭합니다.
     """
-    print("\n[Scraping - 방법 1: Playwright Native Locators]")
-    
-    results_list = []
-    
-    # 1. 모든 항공권 아이템의 부모 컨테이너 로케이터
-    all_items_locator = page.locator('div.combination_ConcurrentItemContainer__uUEbl')
-    
-    # --- 수정: max_items_to_scrape 변수를 사용 ---
-    print(f"스크롤하며 최대 {max_items_to_scrape}개 항목을 수집합니다...")
-
-    for i in range(max_items_to_scrape):
-        data = {}
-        try:
-            item = all_items_locator.nth(i)
-            
-            # 항목이 로드되도록 스크롤하고, 화면에 보일 때까지 대기 (최대 5초) 
-            # 이것이 동적 로딩(무한 스크롤)을 트리거합니다.
-            await item.scroll_into_view_if_needed()
-            await item.wait_for(state='visible', timeout=5000) 
-
-            # (기존 스크래핑 로직 시작)
-            
-            # --- 가격 (공통) ---
-            price_text_locator = item.locator('.item_num__aKbk4').first
-            # 가격 정보가 없는 항목(광고 등)을 건너뛰기 위해 먼저 확인
-            if await price_text_locator.count() == 0:
-                print(f"--- 항목 {i+1}은 가격 정보가 없어 건너뜁니다. (광고 예상) ---")
-                continue
-
-            price_text = await price_text_locator.inner_text()
-            data['price'] = int(price_text.replace(',', ''))
-            
-            # --- 항공사/경로 (2가지 케이스 분리) ---
-            same_airline_block = item.locator('.combination_RoundSameAL__RYbYO')
-            diff_airline_blocks = item.locator('.RoundDiffAL')
-
-            if await same_airline_block.count() > 0:
-                # === 케이스 1: 왕복 동일 항공사 ===
-                data['airline_type'] = 'Same'
-                data['airline'] = await same_airline_block.locator('.airline_name__0Tw5w').first.inner_text()
-                
-                routes = same_airline_block.locator('.route_Route__HYsDn')
-                
-                # 가는 편
-                out_route = routes.nth(0)
-                data['outbound_dep_time'] = await out_route.locator('.route_time__xWu7a').nth(0).inner_text()
-                data['outbound_dep_code'] = await out_route.locator('.route_code__S07WE').nth(0).inner_text()
-                data['outbound_arr_time'] = await out_route.locator('.route_time__xWu7a').nth(1).inner_text()
-                data['outbound_arr_code'] = await out_route.locator('.route_code__S07WE').nth(1).inner_text()
-                data['outbound_info'] = await out_route.locator('.route_details__F_ShG').first.inner_text()
-                
-                # 오는 편
-                in_route = routes.nth(1)
-                data['inbound_dep_time'] = await in_route.locator('.route_time__xWu7a').nth(0).inner_text()
-                data['inbound_dep_code'] = await in_route.locator('.route_code__S07WE').nth(0).inner_text()
-                data['inbound_arr_time'] = await in_route.locator('.route_time__xWu7a').nth(1).inner_text()
-                data['inbound_arr_code'] = await in_route.locator('.route_code__S07WE').nth(1).inner_text()
-                data['inbound_info'] = await in_route.locator('.route_details__F_ShG').first.inner_text()
-
-            elif await diff_airline_blocks.count() > 0:
-                # === 케이스 2: 왕복 다른 항공사 ===
-                data['airline_type'] = 'Different'
-                
-                # 가는 편
-                out_block = diff_airline_blocks.nth(0)
-                data['outbound_airline'] = await out_block.locator('.airline_name__0Tw5w').first.inner_text()
-                out_route = out_block.locator('.route_Route__HYsDn').first
-                data['outbound_dep_time'] = await out_route.locator('.route_time__xWu7a').nth(0).inner_text()
-                data['outbound_dep_code'] = await out_route.locator('.route_code__S07WE').nth(0).inner_text()
-                data['outbound_arr_time'] = await out_route.locator('.route_time__xWu7a').nth(1).inner_text()
-                data['outbound_arr_code'] = await out_route.locator('.route_code__S07WE').nth(1).inner_text()
-                data['outbound_info'] = await out_route.locator('.route_details__F_ShG').first.inner_text()
-                
-                # 오는 편
-                in_block = diff_airline_blocks.nth(1)
-                data['inbound_airline'] = await in_block.locator('.airline_name__0Tw5w').first.inner_text()
-                in_route = in_block.locator('.route_Route__HYsDn').first
-                data['inbound_dep_time'] = await in_route.locator('.route_time__xWu7a').nth(0).inner_text()
-                data['inbound_dep_code'] = await in_route.locator('.route_code__S07WE').nth(0).inner_text()
-                data['inbound_arr_time'] = await in_route.locator('.route_time__xWu7a').nth(1).inner_text()
-                data['inbound_arr_code'] = await in_route.locator('.route_code__S07WE').nth(1).inner_text()
-                data['inbound_info'] = await in_route.locator('.route_details__F_ShG').first.inner_text()
-
-                # 공통 'airline' 필드 생성
-                data['airline'] = f"[왕복다름] {data['outbound_airline']} / {data['inbound_airline']}"
-            
-            results_list.append(data)
-            print(f"✓ 항목 {len(results_list)}/{max_items_to_scrape} 수집 완료: {data.get('airline', 'N/A')} - {data.get('price', 0)}원")
-
-        except TimeoutError:
-            # 5초 이내에 nth(i) 항목이 로드되지 않으면, 
-            # 더 이상 항목이 없는 것(검색 결과가 30개 미만)으로 간주하고 중단.
-            print(f"--- {i+1}번째 항목을 로드하지 못했습니다. (총 {len(results_list)}개 수집 후) 스크래핑을 중단합니다. ---")
-            break # for 루프 탈출
-        
-        except Exception as e:
-            # 기타 스크래핑 오류 (예: inner_text 실패)
-            print(f"--- 항목 {i+1} 스크래핑 중 오류 (건너뜀): {e} ---")
-            # print(await item.inner_html()) # 디버깅 시 주석 해제
-            print("---------------------------------")
-            
-    print(f"✅ 총 {len(results_list)}개 항목 스크래핑 성공.")
-    df = pd.DataFrame(results_list)
-    return df
-
-#방법 2     JS 방법
-async def scrape_flights_evaluate_fixed(page, max_items_to_scrape=30): # max_items_to_scrape 인수를 받도록 수정
-    """
-    방법 2: page.evaluate() 방식 수정
-    - 수정: 스크롤 다운 로직을 포함하여 최대 max_items_to_scrape 개수만큼 항목 수집
-    - 수정: page.set_default_timeout은 awaitable이 아니므로 await 제거
-    - 수정: max_items_to_scrape 값을 JavaScript 스크립트로 전달
-    """
-    print(f"\n[Scraping - 방법 2: page.evaluate() (수정됨, 목표: {max_items_to_scrape}개)]")
-    
-    # page.evaluate() 내부에서 사용할 헬퍼 함수 정의
-    # (주의: 이 함수는 브라우저 컨텍스트에서 실행되므로 Python 변수/함수 접근 불가)
-    # [수정] maxItems 인수를 받도록 (maxItems) => {{ ... }} 형태로 변경
-    scroll_and_scrape_script = '''
-    async (maxItems) => {
-        const results = [];
-        const itemSelector = 'div.combination_ConcurrentItemContainer__uUEbl';
-        // const maxItems = 30; // [제거] 하드코딩된 값 대신 인수로 받음
-        
-        let retries = 5; // 스크롤해도 새 항목이 로드되지 않을 경우를 대비한 안전 장치
-        let lastHeight = 0;
-        let processedIndex = 0; // 이미 처리한 항목의 인덱스
-
-        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-        while (results.length < maxItems) {
-            const items = document.querySelectorAll(itemSelector);
-
-            if (items.length === processedIndex && items.length > 0) {
-                // 스크롤했는데 새 항목이 로드되지 않음
-                retries--;
-                if (retries <= 0) {
-                    console.warn("No new items loaded after scrolling. Stopping.");
-                    break;
-                }
-                console.log(`No new items, retries left: ${retries}`);
-            } else {
-                retries = 5; // 새 항목이 로드되었으므로 재시도 횟수 초기화
-            }
-
-            // 새로 로드된 항목만 처리
-            while (processedIndex < items.length && results.length < maxItems) {
-                const item = items[processedIndex];
-                try {
-                    const data = {};
-                    
-                    // --- 가격 (공통) ---
-                    const priceElem = item.querySelector('.item_num__aKbk4');
-                    if (priceElem) {
-                        const priceText = priceElem.innerText.replace(/,/g, '').trim();
-                        data.price = parseInt(priceText, 10) || 0;
-                    } else {
-                        // 가격 정보가 없는 아이템(광고 등)은 건너뜀
-                        processedIndex++;
-                        continue; 
-                    }
-
-                    // --- 항공사/경로 (케이스 분리) ---
-                    const sameAirlineBlock = item.querySelector('.combination_RoundSameAL__RYbYO');
-                    const diffAirlineBlocks = item.querySelectorAll('.RoundDiffAL');
-
-                    if (sameAirlineBlock) {
-                        // === 케이스 1: 왕복 동일 항공사 ===
-                        data.airline_type = 'Same';
-                        const airlineElem = sameAirlineBlock.querySelector('.airline_name__0Tw5w');
-                        data.airline = airlineElem ? airlineElem.innerText.trim() : 'N/A';
-                        
-                        const routes = sameAirlineBlock.querySelectorAll('.route_Route__HYsDn');
-                        
-                        // 가는 편
-                        if (routes[0]) {
-                            const times = routes[0].querySelectorAll('.route_time__xWu7a');
-                            const codes = routes[0].querySelectorAll('.route_code__S07WE');
-                            data.outbound_dep_time = times[0]?.innerText.trim() || '';
-                            data.outbound_arr_time = times[1]?.innerText.trim() || '';
-                            data.outbound_dep_code = codes[0]?.innerText.trim() || '';
-                            data.outbound_arr_code = codes[1]?.innerText.trim() || '';
-                            data.outbound_info = routes[0].querySelector('.route_details__F_ShG')?.innerText.trim() || '';
-                        }
-                        
-                        // 오는 편
-                        if (routes[1]) {
-                            const times = routes[1].querySelectorAll('.route_time__xWu7a');
-                            const codes = routes[1].querySelectorAll('.route_code__S07WE');
-                            data.inbound_dep_time = times[0]?.innerText.trim() || '';
-                            data.inbound_arr_time = times[1]?.innerText.trim() || '';
-                            data.inbound_dep_code = codes[0]?.innerText.trim() || '';
-                            data.inbound_arr_code = codes[1]?.innerText.trim() || '';
-                            data.inbound_info = routes[1].querySelector('.route_details__F_ShG')?.innerText.trim() || '';
-                        }
-                        
-                    } else if (diffAirlineBlocks.length > 0) {
-                        // === 케이스 2: 왕복 다른 항공사 ===
-                        data.airline_type = 'Different';
-                        
-                        if (diffAirlineBlocks[0]) {
-                            data.outbound_airline = diffAirlineBlocks[0].querySelector('.airline_name__0Tw5w')?.innerText.trim() || 'N/A';
-                            const out_route = diffAirlineBlocks[0].querySelector('.route_Route__HYsDn');
-                            if (out_route) {
-                                data.outbound_dep_time = out_route.querySelectorAll('.route_time__xWu7a')[0]?.innerText.trim() || '';
-                                data.outbound_arr_time = out_route.querySelectorAll('.route_time__xWu7a')[1]?.innerText.trim() || '';
-                                data.outbound_dep_code = out_route.querySelectorAll('.route_code__S07WE')[0]?.innerText.trim() || '';
-                                data.outbound_arr_code = out_route.querySelectorAll('.route_code__S07WE')[1]?.innerText.trim() || '';
-                                data.outbound_info = out_route.querySelector('.route_details__F_ShG')?.innerText.trim() || '';
-                            }
-                        }
-                        if (diffAirlineBlocks[1]) {
-                            data.inbound_airline = diffAirlineBlocks[1].querySelector('.airline_name__0Tw5w')?.innerText.trim() || 'N/A';
-                            const in_route = diffAirlineBlocks[1].querySelector('.route_Route__HYsDn');
-                             if (in_route) {
-                                data.inbound_dep_time = in_route.querySelectorAll('.route_time__xWu7a')[0]?.innerText.trim() || '';
-                                data.inbound_arr_time = in_route.querySelectorAll('.route_time__xWu7a')[1]?.innerText.trim() || '';
-                                data.inbound_dep_code = in_route.querySelectorAll('.route_code__S07WE')[0]?.innerText.trim() || '';
-                                data.inbound_arr_code = in_route.querySelectorAll('.route_code__S07WE')[1]?.innerText.trim() || '';
-                                data.inbound_info = in_route.querySelector('.route_details__F_ShG')?.innerText.trim() || '';
-                            }
-                        }
-                        data.airline = `[왕복다름] ${data.outbound_airline || 'N/A'} / ${data.inbound_airline || 'N/A'}`;
-                    }
-
-                    results.push(data);
-                    // [수정] JavaScript 콘솔 로그에서도 maxItems 값을 사용
-                    console.log(`✓ Item ${results.length}/${maxItems} collected: ${data.airline} - ${data.price}원`);
-
-                } catch (e) {
-                    console.error(`Error at item index ${processedIndex}:`, e.message);
-                } // end try-catch
-                processedIndex++; // 다음 항목으로 이동
-            } // end while(processedIndex < items.length)
-
-            if (results.length >= maxItems) {
-                break; // 목표 달성
-            }
-
-            // 다음 항목을 로드하기 위해 스크롤
-            lastHeight = document.documentElement.scrollHeight;
-            window.scrollTo(0, lastHeight);
-            
-            // 새 콘텐츠가 로드될 시간을 줍니다.
-            await delay(1000); 
-
-        } // end while(results.length < maxItems)
-        
-        console.log(`=== 총 ${results.length}개 항공권 추출 완료 ===`);
-        return results;
-    }
-    '''
-    
-    # [수정] page.set_default_timeout은 awaitable이 아닙니다. 'await'를 제거합니다.
-    print("... (방법 2) 페이지 기본 타임아웃을 90초로 설정합니다.")
-    page.set_default_timeout(90000) # 90초 (90000ms) - 'await' 제거
-    
-    flights_data = [] # 기본값 초기화
-    
+    popup = page.locator("#ad-popup")
     try:
-        # [수정] 두 번째 인수로 max_items_to_scrape 값을 JavaScript에 전달합니다.
-        flights_data = await page.evaluate(scroll_and_scrape_script, max_items_to_scrape)
-        
-    except Exception as e:
-        print(f"✗ page.evaluate() 실행 중 오류 발생: {e}")
-        # 오류가 발생해도 빈 리스트(flights_data)로 계속 진행하거나,
-        # raise e # <- 이 주석을 풀면 프로그램이 여기서 중단됩니다.
-        
-    finally:
-        # [수정] 여기도 마찬가지로 'await'를 제거합니다.
-        print("... (방법 2) 페이지 기본 타임아웃을 30초로 복원합니다.")
-        page.set_default_timeout(30000) # 30초 (30000ms) - Playwright의 기본값
-    
-    print(f"\n✅ JavaScript 추출 완료: {len(flights_data)}개")
-    df = pd.DataFrame(flights_data)
-    return df
+        if await popup.count() == 0:
+            print("... 광고 팝업이 발견되지 않았습니다.")
+            return
+    except Exception:
+        print("... 광고 팝업이 발견되지 않았습니다.")
+        return
 
-#방법 3     하이브리드. 방법1+방법2
+    close_text = re.compile("오늘 하루 보지 않기|다시 보지 않기|7일간 보지 않기|닫기|close", re.IGNORECASE)
+    candidates = popup.locator("button, a, [role='button']").filter(has_text=close_text)
+
+    try:
+        count = await candidates.count()
+        for i in range(count):
+            button = candidates.nth(i)
+            if await button.is_visible():
+                await button.click(timeout=3000)
+                print("✓ 광고 팝업 닫기 버튼 클릭")
+                await page.wait_for_timeout(500)
+                return
+
+        visible_controls = popup.locator("button, a, [role='button']")
+        count = await visible_controls.count()
+        for i in range(count - 1, -1, -1):
+            button = visible_controls.nth(i)
+            if await button.is_visible():
+                await button.click(timeout=3000)
+                print("✓ 광고 팝업의 보이는 버튼을 클릭해 닫기 시도")
+                await page.wait_for_timeout(500)
+                return
+    except Exception as e:
+        print(f"--- 광고 팝업 닫기 중 예외 발생 (무시하고 계속): {e} ---")
+
+    try:
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(500)
+        if await popup.count() > 0:
+            await popup.first.evaluate("element => element.remove()")
+            print("✓ 광고 팝업 레이어를 제거했습니다.")
+    except Exception as e:
+        print(f"--- 광고 팝업 fallback 처리 중 예외 발생 (무시하고 계속): {e} ---")
+
+
+async def select_naver_trip_type(page, trip_type):
+    if trip_type != "oneway":
+        return
+
+    print("... 네이버 항공권 여정 방식을 편도로 설정 중")
+    candidates = [
+        page.get_by_role("button", name="편도", exact=True),
+        page.get_by_text("편도", exact=True),
+    ]
+    for candidate in candidates:
+        try:
+            if await candidate.count() > 0:
+                await candidate.first.click(timeout=3000)
+                await page.wait_for_timeout(500)
+                print("✓ 네이버 항공권 편도 설정 완료")
+                return
+        except Exception:
+            pass
+
+    raise RuntimeError("네이버 항공권 편도 버튼을 찾지 못했습니다.")
+
+
+#항공권 결과 수집
 async def scrape_flights_hybrid(page, max_items_to_scrape=30):
     """
-    방법 3 (하이브리드): page.evaluate() + 이벤트 기반 대기
-    - 방법 2의 '속도' (JS 내부 실행)와 
-    - 방법 1의 '안정성' (이벤트 기반 대기)을 결합합니다.
+    page.evaluate()로 현재 렌더링된 항공권 목록을 읽고, 새 항목 로드를 짧게 대기합니다.
     """
     print(f"\n[Scraping - 방법 3: Hybrid (JS + Smart Wait)] (목표: {max_items_to_scrape}개)")
 
@@ -589,6 +502,10 @@ async def scrape_flights_hybrid(page, max_items_to_scrape=30):
                         processedIndex++;
                         continue; // 가격 없는 항목(광고) 건너뛰기
                     }
+                    const bookingLink = item.querySelector('a[href]') || item.closest('a[href]');
+                    data.booking_url = bookingLink
+                        ? new URL(bookingLink.getAttribute('href'), window.location.href).href
+                        : window.location.href;
                     
                     // --- (방법 2와 동일한 스크래핑 로직) ---
                     const sameAirlineBlock = item.querySelector('.combination_RoundSameAL__RYbYO');
@@ -703,7 +620,17 @@ async def scrape_flights_hybrid(page, max_items_to_scrape=30):
     return df
 
 
-async def scrape_naver():
+async def scrape_naver(
+    trip_type="roundtrip",
+    dep3=None,
+    arr3=None,
+    depdate=None,
+    retdate=None,
+    max_items_to_scrape=None,
+    headless=False,
+    output_format="csv",
+    output_dir="./result",
+):
     """
     네이버 항공권 사이트를 크롤링하는 함수
     [수정] 방법 2를 우선 시도하고, 실패하거나 결과가 비었을 때 방법 1로 자동 전환.
@@ -728,93 +655,125 @@ async def scrape_naver():
         depdate_default_str = default_dep_date.strftime('%Y%m%d')   #출발일 기본값 설정! 
         retdate_default_str = default_ret_date.strftime('%Y%m%d')   #도착일 기본값 설정! 
 
-        #입력받기_________________(입력 필요 없으면 전체 주석처리)___________________________
+        #입력받기_________________(인수가 없을 때만 터미널에서 질문)___________________________
 
         ##출발 공항 입력
-        while True:
-            dep3 = input(f"목적지 공항을 입력하세요(IATA 3자리 코드, 예: {dep3_default}) : ")
-            if not dep3: # 엔터만 치면 기본값 사용
-                dep3 = dep3_default
-                print(f"기본값 {dep3}을 사용합니다.")
-                break
-            
+        if dep3 is None:
+            while True:
+                dep3 = input(f"출발 공항을 입력하세요(IATA 3자리 코드, 예: {dep3_default}) : ")
+                if not dep3: # 엔터만 치면 기본값 사용
+                    dep3 = dep3_default
+                    print(f"기본값 {dep3}을 사용합니다.")
+                    break
+
+                dep3 = dep3.upper() # 소문자를 대문자로
+                if dep3.isalpha() and len(dep3) == 3:
+                    break
+                print("✗ 잘못된 형식입니다. 반드시 알파벳 3자리로 입력해주세요.")
+        else:
             dep3 = dep3.upper() # 소문자를 대문자로
-            if dep3.isalpha() and len(dep3) == 3:
-                break
-            print("✗ 잘못된 형식입니다. 반드시 알파벳 3자리로 입력해주세요.")
+            if not (dep3.isalpha() and len(dep3) == 3):
+                raise ValueError("출발 공항은 IATA 알파벳 3자리 코드여야 합니다.")
 
         ##도착 공항 입력
-        while True:
-            arr3 = input(f"목적지 공항을 입력하세요(IATA 3자리 코드, 예: {arr3_default}) : ")
-            if not arr3: # 엔터만 치면 기본값 사용
-                arr3 = arr3_default
-                print(f"기본값 {arr3}을 사용합니다.")
-                break
-            
+        if arr3 is None:
+            while True:
+                arr3 = input(f"도착 공항을 입력하세요(IATA 3자리 코드, 예: {arr3_default}) : ")
+                if not arr3: # 엔터만 치면 기본값 사용
+                    arr3 = arr3_default
+                    print(f"기본값 {arr3}을 사용합니다.")
+                    break
+
+                arr3 = arr3.upper() # 소문자를 대문자로
+                if arr3.isalpha() and len(arr3) == 3:
+                    break
+                print("✗ 잘못된 형식입니다. 반드시 알파벳 3자리로 입력해주세요.")
+        else:
             arr3 = arr3.upper() # 소문자를 대문자로
-            if arr3.isalpha() and len(arr3) == 3:
-                break
-            print("✗ 잘못된 형식입니다. 반드시 알파벳 3자리로 입력해주세요.")
+            if not (arr3.isalpha() and len(arr3) == 3):
+                raise ValueError("도착 공항은 IATA 알파벳 3자리 코드여야 합니다.")
 
 
         ##출발일 입력
-        while True:
-            depdate = input(f"출발 연월일을 입력하세요(YYYYMMDD, 예: {depdate_default_str}) :")
-            if not depdate: #아무것도 압력하지 않으면 cuz. 파이썬에서 빈 문자열은 False이다.
-                depdate = depdate_default_str
-                print(f"기본값 {depdate}를 사용합니다.")
-                break
+        if depdate is None:
+            while True:
+                depdate = input(f"출발 연월일을 입력하세요(YYYYMMDD, 예: {depdate_default_str}) :")
+                if not depdate: #아무것도 압력하지 않으면 cuz. 파이썬에서 빈 문자열은 False이다.
+                    depdate = depdate_default_str
+                    print(f"기본값 {depdate}를 사용합니다.")
+                    break
+                if not is_valid_date(depdate):
+                    print("✗ 잘못된 날짜 형식입니다. YYYYMMDD 8자리 숫자로 올바르게 입력해주세요.")
+                    continue
+
+                if today.strftime('%Y%m%d') < depdate:  #내일부터 출발 가능! 네이버 항공권 시스템 상 오늘 선택 불가.
+                    break
+                print("✗  출발일이 오늘보다 빠를 수 없습니다. 다시 입력해 주세요.")
+        else:
             if not is_valid_date(depdate):
-                print("✗ 잘못된 날짜 형식입니다. YYYYMMDD 8자리 숫자로 올바르게 입력해주세요.")
-                continue
+                raise ValueError("출발일은 YYYYMMDD 형식의 올바른 날짜여야 합니다.")
+            if today.strftime('%Y%m%d') >= depdate:
+                raise ValueError("출발일은 오늘 이후 날짜여야 합니다.")
 
-            if today.strftime('%Y%m%d') < depdate:  #내일부터 출발 가능! 네이버 항공권 시스템 상 오늘 선택 불가.
-                break
-            print("✗  출발일이 오늘보다 빠를 수 없습니다. 다시 입력해 주세요.")
 
+        if trip_type not in ("roundtrip", "oneway"):
+            raise ValueError("여정 방식은 roundtrip 또는 oneway여야 합니다.")
 
         #도착일 입력
-        while True:
-            retdate = input(f"도착 연월일을 입력하세요(YYYYMMDD, 예: {retdate_default_str}) :")
-            if not retdate:
-                retdate = retdate_default_str
-                print(f"기본값 {retdate}를 사용합니다.")
-            
+        if trip_type == "oneway":
+            retdate = ""
+        elif retdate is None:
+            while True:
+                retdate = input(f"복귀 연월일을 입력하세요(YYYYMMDD, 예: {retdate_default_str}) :")
+                if not retdate:
+                    retdate = retdate_default_str
+                    print(f"기본값 {retdate}를 사용합니다.")
+
+                if not is_valid_date(retdate):
+                    print("✗ 잘못된 날짜 형식입니다. YYYYMMDD 8자리 숫자로 올바르게 입력해주세요.")
+                    continue
+
+                if depdate < retdate:
+                    break
+                print("✗ 다시 입력 해주세요. 복귀일이 출발일보다 빠르거나 같을 수 없습니다.")
+        else:
             if not is_valid_date(retdate):
-                print("✗ 잘못된 날짜 형식입니다. YYYYMMDD 8자리 숫자로 올바르게 입력해주세요.")
-                continue
-                
-            if depdate < retdate:
-                break
-            print("✗ 다시 입력 해주세요. 복귀일이 출발일보다 빠르거나 같을 수 없습니다.")
+                raise ValueError("복귀일은 YYYYMMDD 형식의 올바른 날짜여야 합니다.")
+            if depdate >= retdate:
+                raise ValueError("복귀일은 출발일보다 늦어야 합니다.")
 
         # 크롤링할 데이터 개수 입력
         max_items_to_scrape_default = 30
-        while True:
-            max_items_input = input(f"스크래핑할 최대 항목 수를 입력하세요 (기본값: {max_items_to_scrape_default}) : ")
-            if not max_items_input:
-                max_items_to_scrape = max_items_to_scrape_default
-                print(f"기본값 {max_items_to_scrape}개를 사용합니다.")
-                break
-            
-            if max_items_input.isdigit() and int(max_items_input) > 0:
-                max_items_to_scrape = int(max_items_input)
-                break
-            print("✗ 잘못된 형식입니다. 0보다 큰 숫자로 입력해주세요.")
+        if max_items_to_scrape is None:
+            while True:
+                max_items_input = input(f"스크래핑할 최대 항목 수를 입력하세요 (기본값: {max_items_to_scrape_default}) : ")
+                if not max_items_input:
+                    max_items_to_scrape = max_items_to_scrape_default
+                    print(f"기본값 {max_items_to_scrape}개를 사용합니다.")
+                    break
+
+                if max_items_input.isdigit() and int(max_items_input) > 0:
+                    max_items_to_scrape = int(max_items_input)
+                    break
+                print("✗ 잘못된 형식입니다. 0보다 큰 숫자로 입력해주세요.")
+        elif max_items_to_scrape <= 0:
+            raise ValueError("수집 개수는 1 이상이어야 합니다.")
         # -----------------------------------------
 
         # 입력값을 날짜 형식 변수로 변환
         depyyyymm = depdate[:4]+'.'+depdate[4:6]+'.'
         depdd = int(depdate[6:])
-        retyyyymm = retdate[:4]+'.'+retdate[4:6]+'.'
-        retdd = int(retdate[6:])
+        retyyyymm = retdate[:4]+'.'+retdate[4:6]+'.' if retdate else ""
+        retdd = int(retdate[6:]) if retdate else 0
         
         #___________입력 끝_____________________________________________________________________________
 
         profile = generate_random_profile()
+        profile['locale'] = 'ko-KR'
+        profile['timezone_id'] = 'Asia/Seoul'
         print_profile_info(profile)
         
-        browser = await p.firefox.launch(headless=False)
+        browser = await p.firefox.launch(headless=headless)
         #await의 의미는 실행 하고 I\O작업이 끝날때까지 대기하라는 의미
         #await이 없으면 안 된다!
 
@@ -837,27 +796,10 @@ async def scrape_naver():
         print(f"페이지 제목: {await page.title()}")
 
         #~~~~~~~광고 나오면 닫기 시도~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        try:
-            # 시도 1: '오늘 하루 보지 않기' 등 텍스트 기반 닫기 버튼
-            # 특정 클래스 이름 대신 텍스트로 찾는 것이 더 견고할 수 있음
-            close_popup_button = page.get_by_role("button", name=re.compile("오늘 하루 보지 않기|다시 보지 않기|7일간 보지 않기|닫기"))
-            if await close_popup_button.count() > 0:
-                await close_popup_button.first.click(timeout=3000)
-                print("✓ 텍스트 기반 팝업 닫기 버튼 클릭")
-            else:
-                 # 시도 2: 'x' 또는 'close' 포함하는 버튼 (aria-label 등)
-                close_icon_button = page.locator("button[class*='close'], button[aria-label*='닫기'], button[aria-label*='close']")
-                if await close_icon_button.count() > 0:
-                    await close_icon_button.first.click(timeout=3000)
-                    print("✓ 아이콘(X) 팝업 닫기 버튼 클릭")
-                else:
-                    print("... 광고 팝업이 발견되지 않았거나, 다른 유형의 팝업입니다.")
-            
-            await page.wait_for_timeout(500) # 닫기 후 잠시 대기
-
-        except Exception as e:
-            print(f"--- 광고 팝업 닫기 중 예외 발생 (무시하고 계속): {e} ---")
+        await close_ad_popup_if_present(page)
         #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        await select_naver_trip_type(page, trip_type)
 
         #______출발지 설정_______________________________________________________________________________________
         ##출발지 공항 이름 입력하기
@@ -865,7 +807,8 @@ async def scrape_naver():
         # HTML에서 그대로 붙여넣기 하면 안되고 -> 태그.클래스값(단 붙여넣기 한 것 안의 띄어쓰기를 .으로 대체해야 함!)
         # 띄어쓰기를 없애고 클래스 이름 앞에 모두 .을 붙입니다.
         await asyncio.sleep(generate_random_short_delay())
-        await insert_airport(page,dep3)
+        if not await insert_airport(page, dep3, "출발지"):
+            raise RuntimeError(f"{dep3} 출발지 선택에 실패했습니다.")
         
         #______도착지 설정_______________________________________________________________________________________
         ##도착지 공항 이름 입력하기
@@ -873,7 +816,8 @@ async def scrape_naver():
         # HTML에서 그대로 붙여넣기 하면 안되고 -> 태그.클래스값(단 붙여넣기 한 것 안의 띄어쓰기를 .으로 대체해야 함!)
         # 띄어쓰기를 없애고 클래스 이름 앞에 모두 .을 붙입니다.
         await asyncio.sleep(generate_random_short_delay())
-        await insert_airport(page,arr3)
+        if not await insert_airport(page, arr3, "도착지"):
+            raise RuntimeError(f"{arr3} 도착지 선택에 실패했습니다.")
 
 
         #____playwright에서 마우스로 선택_________________________________________________________________
@@ -882,11 +826,14 @@ async def scrape_naver():
         await page.mouse.wheel(0, 700)      #휠 아래로 조금 내리기
         await asyncio.sleep(generate_random_short_delay())
 
-        await click_calendar_date(page, depyyyymm, depdd, start_from_visible=False) #날짜 선택하는 함수!       
+        if not await click_calendar_date(page, depyyyymm, depdd, start_from_visible=False): #날짜 선택하는 함수!
+            raise RuntimeError(f"{depdate} 출발일 선택에 실패했습니다.")
         await asyncio.sleep(generate_random_short_delay())
 
         #오는날 선택
-        await click_calendar_date(page, retyyyymm, retdd, start_from_visible=True) #날짜 선택하는 함수!   
+        if trip_type == "roundtrip":
+            if not await click_calendar_date(page, retyyyymm, retdd, start_from_visible=True): #날짜 선택하는 함수!
+                raise RuntimeError(f"{retdate} 복귀일 선택에 실패했습니다.")
 
         #검색버튼 누르기
         # --- 수정: '검색' 이름의 버튼이 2개 발견되는 오류(strict mode violation) 해결 ---
@@ -906,7 +853,18 @@ async def scrape_naver():
         saved_info = pd.DataFrame() # 최종 결과를 담을 DataFrame 초기화
 
         #3번 방법으로 실행.
-        saved_info = await scrape_flights_hybrid(page, max_items_to_scrape=30)
+        saved_info = await scrape_flights_hybrid(page, max_items_to_scrape=max_items_to_scrape)
+        if not saved_info.empty:
+            saved_info["trip_type"] = trip_type
+            if trip_type == "oneway":
+                for column in [
+                    "inbound_dep_time",
+                    "inbound_arr_time",
+                    "inbound_dep_code",
+                    "inbound_arr_code",
+                    "inbound_info",
+                ]:
+                    saved_info[column] = ""
 
         # --- (수정) 최종 결과 확인 및 저장 ---
         if saved_info.empty:
@@ -917,12 +875,17 @@ async def scrape_naver():
             print("--------------------------\n")
 
             # --- 결과 저장 ---
-            save_directory = './result'        #상위 디렉토리에 result에 저장
+            save_directory = output_dir        #상위 디렉토리에 result에 저장
             os.makedirs(save_directory, exist_ok=True)
-            
-            csv_filename = f'{save_directory}/{dep3}_TO_{arr3}_{depdate}-{retdate}.csv'
-            saved_info.to_csv(csv_filename, index=False, encoding='utf-8-sig')
-            print(f"✓ 검색결과가 CSV 파일로 저장되었습니다. ({csv_filename})")
+
+            if output_format == "xlsx":
+                output_path = f'{save_directory}/{dep3}_TO_{arr3}_{output_date_suffix(depdate, retdate, trip_type)}.xlsx'
+                saved_info.to_excel(output_path, index=False)
+                print(f"✓ 검색결과가 Excel 파일로 저장되었습니다. ({output_path})")
+            else:
+                output_path = f'{save_directory}/{dep3}_TO_{arr3}_{output_date_suffix(depdate, retdate, trip_type)}.csv'
+                saved_info.to_csv(output_path, index=False, encoding='utf-8-sig')
+                print(f"✓ 검색결과가 CSV 파일로 저장되었습니다. ({output_path})")
 
             #excel_filename = f'./result/SEL_TO_{arr3}_{depdate}-{retdate}.xlsx'
             #saved_info.to_excel(excel_filename, index=False)
@@ -938,3 +901,4 @@ async def scrape_naver():
         await browser.close() 
         
         print("***크롤링을 종료합니다***")
+        return saved_info

@@ -1,7 +1,7 @@
 {
   "name": "flight_crawler",
   "version": "1.0.0",
-  "description": "",
+  "description": "Web UI for running the Naver flight price crawler.",
   "homepage": "https://github.com/SoliShim/flight_crawler#readme",
   "bugs": {
     "url": "https://github.com/SoliShim/flight_crawler/issues"
@@ -15,7 +15,8 @@
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "test": "node --check server.js"
   },
   "dependencies": {
     "express": "^5.1.0"

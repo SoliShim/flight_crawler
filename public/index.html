@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>항공권 가격 수집기</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">FC</span>
+          <div>
+            <p>Flight Crawler</p>
+            <h1>항공권 가격 수집기</h1>
+          </div>
+        </div>
+        <div class="runtime-chip" id="runtime-chip">대기 중</div>
+      </header>
+
+      <section id="file-warning" class="notice hidden" aria-live="polite">
+        <strong>서버 실행이 필요합니다.</strong>
+        <span id="runtime-warning-text">이 화면은 파일로 열렸습니다. 검색은 로컬 서버가 켜져 있어야 작동합니다.</span>
+        <a href="http://127.0.0.1:8080">서버 화면 열기</a>
+      </section>
+
+      <section class="workspace">
+        <aside class="control-panel" aria-labelledby="search-title">
+          <div class="panel-heading">
+            <h2 id="search-title">검색 조건</h2>
+            <p>플랫폼과 여정 방식을 선택한 뒤 가격을 수집합니다.</p>
+          </div>
+
+          <form id="search-form" class="search-form">
+            <fieldset class="source-toggle" aria-label="검색 플랫폼">
+              <legend>검색 플랫폼</legend>
+              <label>
+                <input type="radio" name="source" value="naver" checked>
+                <span>네이버 항공권</span>
+              </label>
+              <label>
+                <input type="radio" name="source" value="google">
+                <span>Google Flights</span>
+              </label>
+              <label>
+                <input type="radio" name="source" value="trip">
+                <span>Trip.com</span>
+              </label>
+              <label>
+                <input type="radio" name="source" value="all">
+                <span>전부 검색하기</span>
+              </label>
+            </fieldset>
+
+            <fieldset class="trip-type-toggle" aria-label="여정 방식">
+              <legend>여정 방식</legend>
+              <label>
+                <input type="radio" name="tripType" value="roundtrip" checked>
+                <span>왕복</span>
+              </label>
+              <label>
+                <input type="radio" name="tripType" value="oneway">
+                <span>편도</span>
+              </label>
+            </fieldset>
+
+            <div class="field-row">
+              <label>
+                <span>출발 공항</span>
+                <input name="dep3" value="ICN" maxlength="3" autocomplete="off" required>
+              </label>
+              <label>
+                <span>도착 공항</span>
+                <input name="arr3" value="TPE" maxlength="3" autocomplete="off" required>
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label>
+                <span>출발일</span>
+                <input name="depart" type="date" required>
+              </label>
+              <label id="return-date-field">
+                <span>복귀일</span>
+                <input name="returnDate" type="date" required>
+              </label>
+            </div>
+
+            <div class="field-row compact-row">
+              <label>
+                <span>수집 개수</span>
+                <input name="items" type="number" value="10" min="1" max="100" required>
+              </label>
+              <label class="checkbox-field">
+                <input name="headless" type="checkbox" checked>
+                <span>
+                  <strong>Headless</strong>
+                  <small>브라우저 창 숨김</small>
+                </span>
+              </label>
+            </div>
+
+            <button id="submit-button" class="primary-action" type="submit">가격 수집 시작</button>
+          </form>
+        </aside>
+
+        <section class="content-panel">
+          <div class="status-card" aria-live="polite">
+            <div>
+              <span class="section-label">상태</span>
+              <p id="status-text">조건을 입력하고 수집을 시작하세요.</p>
+            </div>
+            <a id="download-link" class="download-link hidden" href="#" download>CSV 다운로드</a>
+          </div>
+
+          <section class="results-panel">
+            <div class="results-header">
+              <div>
+                <span class="section-label">검색 결과</span>
+                <h2>수집된 항공권</h2>
+              </div>
+              <span id="result-count">0건</span>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>플랫폼</th>
+                    <th>가격</th>
+                    <th>항공사</th>
+                    <th>가는 편</th>
+                    <th id="inbound-header">오는 편</th>
+                  </tr>
+                </thead>
+                <tbody id="results-body">
+                  <tr>
+                    <td colspan="5" class="empty-cell">아직 수집된 결과가 없습니다.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="log-panel">
+            <div class="results-header">
+              <div>
+                <span class="section-label">실행 로그</span>
+                <h2>크롤러 출력</h2>
+              </div>
+              <button id="toggle-log" class="secondary-action" type="button">보기</button>
+            </div>
+            <pre id="log-output" class="hidden"></pre>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
