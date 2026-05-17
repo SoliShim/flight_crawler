@@ -12,3 +12,6 @@ temp.txt
 error_*.png
 result/*.csv
 result/*.xlsx
+.flight-crawler.local.env
+.flight-crawler.runtime.json
+.flight-crawler.logs/
