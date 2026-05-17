@@ -28,7 +28,7 @@ write_default_config() {
 API_KEY="$generated_key"
 ALLOWED_ORIGINS="https://solishim.github.io"
 HOST=127.0.0.1
-PORT=8080
+PORT=8888
 EOF
   chmod 600 "$CONFIG_FILE"
 }
@@ -45,7 +45,18 @@ set +a
 API_KEY="${API_KEY:-$(generate_key)}"
 ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-https://solishim.github.io}"
 HOST="${HOST:-127.0.0.1}"
-PORT="${PORT:-8080}"
+PREFERRED_PORT="${FLIGHT_CRAWLER_PORT:-${PORT:-8888}}"
+
+if [ "$PREFERRED_PORT" = "8080" ] && [ "${FLIGHT_CRAWLER_ALLOW_8080:-0}" != "1" ]; then
+  PREFERRED_PORT=8888
+fi
+
+case "$PREFERRED_PORT" in
+  ''|*[!0-9]*)
+    echo "PORT 값은 숫자여야 합니다. 현재 값: $PREFERRED_PORT"
+    exit 1
+    ;;
+esac
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm을 찾을 수 없습니다. Node.js를 먼저 설치해 주세요."
@@ -78,21 +89,63 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
+port_in_use() {
+  local candidate_port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$candidate_port" -sTCP:LISTEN >/dev/null 2>&1
+    return
+  fi
+
+  (echo > "/dev/tcp/$HOST/$candidate_port") >/dev/null 2>&1
+}
+
+find_available_port() {
+  local start_port="$1"
+  local end_port=$((start_port + 99))
+  local candidate_port
+
+  for candidate_port in $(seq "$start_port" "$end_port"); do
+    if ! port_in_use "$candidate_port"; then
+      echo "$candidate_port"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+if curl -fsS "http://$HOST:$PREFERRED_PORT/api/health" >/dev/null 2>&1; then
+  if [ "${FLIGHT_CRAWLER_REUSE_SERVER:-0}" = "1" ]; then
+    PORT="$PREFERRED_PORT"
+  else
+    PORT="$(find_available_port "$PREFERRED_PORT" || true)"
+  fi
+else
+  PORT="$(find_available_port "$PREFERRED_PORT" || true)"
+fi
+
+if [ -z "${PORT:-}" ]; then
+  echo "$PREFERRED_PORT 부터 100개 포트 안에서 빈 포트를 찾지 못했습니다."
+  exit 1
+fi
+
 health_url="http://$HOST:$PORT/api/health"
 
 if curl -fsS "$health_url" >/dev/null 2>&1; then
   if [ "${FLIGHT_CRAWLER_REUSE_SERVER:-0}" != "1" ]; then
-    echo "이미 $health_url 에 서버가 실행 중입니다."
-    echo "API 키가 현재 스크립트 설정과 다를 수 있으므로 자동 실행을 중단합니다."
-    echo
-    echo "해결 방법:"
-    echo "1. 기존 서버 터미널을 종료한 뒤 이 파일을 다시 실행합니다."
-    echo "2. 기존 서버를 그대로 쓰려면 아래처럼 실행합니다."
-    echo "   FLIGHT_CRAWLER_REUSE_SERVER=1 ./scripts/start-macmini-api.sh"
-    exit 1
+    echo "이미 $health_url 에 서버가 실행 중입니다. 다른 포트를 다시 찾습니다."
+    PORT="$(find_available_port "$((PORT + 1))" || true)"
+    if [ -z "${PORT:-}" ]; then
+      echo "$PREFERRED_PORT 부터 100개 포트 안에서 빈 포트를 찾지 못했습니다."
+      exit 1
+    fi
+    health_url="http://$HOST:$PORT/api/health"
   fi
   echo "이미 실행 중인 로컬 API 서버를 재사용합니다: $health_url"
 else
+  if [ "$PORT" != "$PREFERRED_PORT" ]; then
+    echo "$PREFERRED_PORT 포트가 사용 중이라 $PORT 포트를 사용합니다."
+  fi
   echo "맥미니 로컬 API 서버를 시작합니다..."
   : > "$SERVER_LOG"
   API_KEY="$API_KEY" \

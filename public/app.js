@@ -18,7 +18,7 @@ const apiSettingsStatus = document.querySelector('#api-settings-status');
 const apiTestButton = document.querySelector('#api-test-button');
 const apiClearButton = document.querySelector('#api-clear-button');
 
-const LOCAL_SERVER = 'http://127.0.0.1:8080';
+const LOCAL_SERVER = 'http://127.0.0.1:8888';
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const IS_LOCAL_SERVER = LOCAL_HOSTS.has(window.location.hostname);
 const IS_FILE_MODE = window.location.protocol === 'file:';
@@ -495,7 +495,7 @@ form.addEventListener('submit', async (event) => {
     const hint = IS_STATIC_HOSTING
       ? ' 맥미니 API 서버 주소, API 키, Cloudflare Tunnel 상태를 확인해 주세요.'
       : IS_FILE_MODE
-        ? ' 로컬 서버를 켠 뒤 다시 시도하거나 http://127.0.0.1:8080 주소로 열어 주세요.'
+        ? ' 로컬 서버를 켠 뒤 다시 시도하거나 자동 실행 파일이 열어준 GitHub Pages 주소를 사용해 주세요.'
         : '';
     setStatus(`${error.message}${hint}`, true);
     renderLog(error.stack || error.message);

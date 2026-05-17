@@ -32,7 +32,7 @@ npm start
 브라우저에서 아래 주소를 엽니다.
 
 ```text
-http://localhost:8080
+http://localhost:8888
 ```
 
 웹페이지에서 플랫폼, 여정 방식, 출발 공항, 도착 공항, 날짜, 수집 개수를 입력한 뒤 `가격 수집 시작`을 누르면 서버가 Python 크롤러를 실행합니다.
@@ -123,10 +123,11 @@ Start Flight Crawler.command
 스크립트가 하는 일:
 
 1. `.flight-crawler.local.env` 파일이 없으면 API 키를 자동 생성합니다.
-2. 맥미니에서 `http://127.0.0.1:8080` API 서버를 시작합니다.
-3. Cloudflare 임시 터널을 열고 `https://...trycloudflare.com` 주소를 만듭니다.
-4. GitHub Pages 화면을 자동으로 엽니다.
-5. 터미널에 API 서버 주소와 API 키를 보여줍니다.
+2. 맥미니에서 `http://127.0.0.1:8888` API 서버를 시작합니다.
+3. 8888 포트가 사용 중이면 8889, 8890처럼 빈 포트를 자동으로 찾아서 사용합니다.
+4. Cloudflare 임시 터널을 열고 `https://...trycloudflare.com` 주소를 만듭니다.
+5. GitHub Pages 화면을 자동으로 엽니다.
+6. 터미널에 API 서버 주소와 API 키를 보여줍니다.
 
 GitHub Pages 화면이 열리면 터미널에 표시된 `API 키`를 입력하고 `저장`, `연결 확인`을 누릅니다. 이 터미널 창을 닫거나 `Ctrl-C`를 누르면 서버와 터널이 종료됩니다.
 
@@ -146,7 +147,13 @@ brew install cloudflared
 
 이 파일들은 GitHub에 올라가지 않습니다.
 
-이미 `http://127.0.0.1:8080`에 다른 서버가 켜져 있으면 스크립트가 중단됩니다. 기존 서버 터미널을 끈 뒤 다시 실행하는 것이 가장 안전합니다.
+기본 포트는 8888입니다. 이미 8888 포트가 사용 중이면 스크립트가 자동으로 다음 빈 포트를 찾아서 서버와 Cloudflare 터널을 같은 포트로 연결합니다.
+
+특정 포트부터 찾고 싶으면 아래처럼 실행할 수 있습니다.
+
+```bash
+FLIGHT_CRAWLER_PORT=9000 ./scripts/start-macmini-api.sh
+```
 
 ### 1. 맥미니에서 서버 실행
 
@@ -156,14 +163,14 @@ brew install cloudflared
 API_KEY="긴_랜덤_문자열" \
 ALLOWED_ORIGINS="https://solishim.github.io" \
 HOST=127.0.0.1 \
-PORT=8080 \
+PORT=8888 \
 npm start
 ```
 
 로컬에서 상태 확인:
 
 ```bash
-curl http://127.0.0.1:8080/api/health
+curl http://127.0.0.1:8888/api/health
 ```
 
 ### 2. Cloudflare Tunnel 연결
@@ -179,7 +186,7 @@ https://flight-api.yourdomain.com
 Tunnel service 설정:
 
 ```text
-http://127.0.0.1:8080
+http://127.0.0.1:8888
 ```
 
 Cloudflare Tunnel을 켠 뒤 상태 확인:

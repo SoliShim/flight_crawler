@@ -5,7 +5,8 @@ const path = require('node:path');
 const express = require('express');
 
 const app = express();
-const PORT = Number(process.env.PORT || 8080);
+const PORT = Number(process.env.PORT || 8888);
+const MAX_PORT_ATTEMPTS = Number(process.env.PORT_ATTEMPTS || 100);
 const HOST = process.env.HOST || '127.0.0.1';
 const ROOT_DIR = __dirname;
 const RESULT_DIR = path.join(ROOT_DIR, 'result');
@@ -13,8 +14,8 @@ const PYTHON_BIN = process.env.PYTHON_BIN || path.join(ROOT_DIR, '.venv', 'bin',
 const API_KEY = process.env.API_KEY || '';
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://solishim.github.io',
-  'http://localhost:8080',
-  'http://127.0.0.1:8080',
+  'http://localhost:8888',
+  'http://127.0.0.1:8888',
 ];
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS.join(','))
   .split(',')
@@ -448,11 +449,22 @@ app.use((req, res) => {
   res.sendFile(path.join(ROOT_DIR, 'public', 'index.html'));
 });
 
-const server = app.listen(PORT, HOST, () => {
-  console.log(`Flight crawler web UI: http://${HOST}:${PORT}`);
-});
+function listen(port, remainingAttempts = MAX_PORT_ATTEMPTS) {
+  const server = app.listen(port, HOST, () => {
+    console.log(`Flight crawler web UI: http://${HOST}:${port}`);
+  });
 
-server.on('error', (error) => {
-  console.error(`Failed to start web server: ${error.message}`);
-  process.exitCode = 1;
-});
+  server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE' && remainingAttempts > 1) {
+      const nextPort = port + 1;
+      console.warn(`${HOST}:${port} 포트가 사용 중이라 ${nextPort} 포트로 다시 시도합니다.`);
+      listen(nextPort, remainingAttempts - 1);
+      return;
+    }
+
+    console.error(`Failed to start web server: ${error.message}`);
+    process.exitCode = 1;
+  });
+}
+
+listen(PORT);
