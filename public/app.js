@@ -11,14 +11,52 @@ const fileWarning = document.querySelector('#file-warning');
 const runtimeWarningText = document.querySelector('#runtime-warning-text');
 const returnDateField = document.querySelector('#return-date-field');
 const inboundHeader = document.querySelector('#inbound-header');
+const apiSettingsForm = document.querySelector('#api-settings-form');
+const apiBaseInput = document.querySelector('#api-base-input');
+const apiKeyInput = document.querySelector('#api-key-input');
+const apiSettingsStatus = document.querySelector('#api-settings-status');
+const apiTestButton = document.querySelector('#api-test-button');
+const apiClearButton = document.querySelector('#api-clear-button');
 
 const LOCAL_SERVER = 'http://127.0.0.1:8080';
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const IS_LOCAL_SERVER = LOCAL_HOSTS.has(window.location.hostname);
 const IS_FILE_MODE = window.location.protocol === 'file:';
 const IS_STATIC_HOSTING = !IS_FILE_MODE && !IS_LOCAL_SERVER;
-const API_BASE = IS_FILE_MODE ? LOCAL_SERVER : '';
 const query = new URLSearchParams(window.location.search);
+const API_BASE_STORAGE_KEY = 'flightCrawlerApiBase';
+const API_KEY_STORAGE_KEY = 'flightCrawlerApiKey';
+
+let apiBase = normalizeApiBase(query.get('api') || localStorage.getItem(API_BASE_STORAGE_KEY) || defaultApiBase());
+let apiKey = localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+
+function defaultApiBase() {
+  if (IS_FILE_MODE) return LOCAL_SERVER;
+  return '';
+}
+
+function normalizeApiBase(value) {
+  const text = String(value || '').trim().replace(/\/+$/, '');
+  if (!text) return '';
+
+  try {
+    const url = new URL(text);
+    return ['http:', 'https:'].includes(url.protocol) ? url.toString().replace(/\/+$/, '') : '';
+  } catch {
+    return '';
+  }
+}
+
+function currentApiBase() {
+  return apiBase || defaultApiBase();
+}
+
+function apiHeaders(includeJson = false) {
+  const headers = {};
+  if (includeJson) headers['Content-Type'] = 'application/json';
+  if (apiKey) headers['X-Flight-Crawler-Key'] = apiKey;
+  return headers;
+}
 
 function toYYYYMMDD(value) {
   return value.replaceAll('-', '');
@@ -167,23 +205,45 @@ function sourceLabel(source) {
   return labels[source] || source || '-';
 }
 
+function syncApiSettingsUi() {
+  apiBaseInput.value = apiBase;
+  apiKeyInput.value = apiKey;
+
+  if (IS_LOCAL_SERVER) {
+    apiSettingsStatus.textContent = '현재 서버 사용';
+  } else if (currentApiBase()) {
+    apiSettingsStatus.textContent = apiKey ? '저장됨' : 'API 키 확인 필요';
+  } else {
+    apiSettingsStatus.textContent = '설정 필요';
+  }
+}
+
 function updateRuntimeState() {
   const sourceName = selectedSourceName();
   const tripTypeName = selectedTripTypeName();
+  const activeApiBase = currentApiBase();
 
   if (IS_FILE_MODE) {
     runtimeChip.textContent = '파일 모드';
-    runtimeWarningText.textContent = '이 화면은 파일로 열렸습니다. 검색은 로컬 서버가 켜져 있어야 작동합니다.';
+    runtimeWarningText.textContent = '이 화면은 파일로 열렸습니다. 검색은 로컬 서버 또는 API 서버가 켜져 있어야 작동합니다.';
     fileWarning.classList.remove('hidden');
-    setStatus(`${sourceName} ${tripTypeName} 검색 준비 완료. 검색하려면 로컬 서버가 실행 중이어야 합니다.`);
+    setStatus(`${sourceName} ${tripTypeName} 검색 준비 완료. 검색하려면 API 서버가 실행 중이어야 합니다.`);
     return;
   }
 
   if (IS_STATIC_HOSTING) {
-    runtimeChip.textContent = '정적 호스팅';
-    runtimeWarningText.textContent = 'GitHub Pages에서는 화면 미리보기만 가능합니다. 실제 검색은 로컬 서버 또는 별도 백엔드가 필요합니다.';
+    if (activeApiBase) {
+      runtimeChip.textContent = '원격 API 설정됨';
+      runtimeWarningText.textContent = `GitHub Pages 화면에서 ${activeApiBase} API 서버로 검색합니다.`;
+      fileWarning.classList.remove('hidden');
+      setStatus(`${sourceName} ${tripTypeName} 검색 준비 완료. 맥미니 API 서버가 실행 중이어야 합니다.`);
+      return;
+    }
+
+    runtimeChip.textContent = 'API 설정 필요';
+    runtimeWarningText.textContent = 'GitHub Pages에서 검색하려면 맥미니 API 서버 주소와 API 키를 저장해야 합니다.';
     fileWarning.classList.remove('hidden');
-    setStatus('GitHub Pages에서는 크롤러를 실행할 수 없습니다. 로컬 서버에서 검색해 주세요.', true);
+    setStatus('API 서버 주소를 저장한 뒤 검색해 주세요.', true);
     return;
   }
 
@@ -283,14 +343,96 @@ function renderLog(log) {
 function absoluteDownloadUrl(downloadUrl) {
   if (!downloadUrl) return '#';
   if (/^https?:\/\//.test(downloadUrl)) return downloadUrl;
-  return `${API_BASE}${downloadUrl}`;
+  return `${currentApiBase()}${downloadUrl}`;
 }
+
+async function readJsonResponse(response) {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+apiSettingsForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const nextApiBase = normalizeApiBase(apiBaseInput.value);
+
+  if (apiBaseInput.value.trim() && !nextApiBase) {
+    apiBaseInput.setCustomValidity('https://로 시작하는 API 서버 주소를 입력해 주세요.');
+    apiBaseInput.reportValidity();
+    return;
+  }
+
+  apiBaseInput.setCustomValidity('');
+  apiBase = nextApiBase;
+  apiKey = apiKeyInput.value.trim();
+
+  if (apiBase) {
+    localStorage.setItem(API_BASE_STORAGE_KEY, apiBase);
+  } else {
+    localStorage.removeItem(API_BASE_STORAGE_KEY);
+  }
+
+  if (apiKey) {
+    localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
+  } else {
+    localStorage.removeItem(API_KEY_STORAGE_KEY);
+  }
+
+  syncApiSettingsUi();
+  updateRuntimeState();
+  setStatus('API 서버 설정을 저장했습니다.');
+});
+
+apiClearButton.addEventListener('click', () => {
+  apiBase = defaultApiBase();
+  apiKey = '';
+  localStorage.removeItem(API_BASE_STORAGE_KEY);
+  localStorage.removeItem(API_KEY_STORAGE_KEY);
+  syncApiSettingsUi();
+  updateRuntimeState();
+  setStatus('API 서버 설정을 삭제했습니다.');
+});
+
+apiTestButton.addEventListener('click', async () => {
+  const activeApiBase = currentApiBase();
+  if ((IS_STATIC_HOSTING || IS_FILE_MODE) && !activeApiBase) {
+    setStatus('API 서버 주소를 저장한 뒤 연결 확인을 실행해 주세요.', true);
+    return;
+  }
+
+  apiTestButton.disabled = true;
+  apiTestButton.textContent = '확인 중...';
+  setStatus('API 서버 연결을 확인하고 있습니다.');
+
+  try {
+    const response = await fetch(`${activeApiBase}/api/health`, {
+      headers: apiHeaders(),
+    });
+    const data = await readJsonResponse(response);
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || 'API 서버 연결 확인에 실패했습니다.');
+    }
+
+    setStatus(data.apiKeyRequired && !apiKey
+      ? 'API 서버는 연결됐지만 검색하려면 API 키가 필요합니다.'
+      : 'API 서버 연결이 정상입니다.');
+  } catch (error) {
+    setStatus(`${error.message} Cloudflare Tunnel 주소와 맥미니 서버 실행 상태를 확인해 주세요.`, true);
+  } finally {
+    apiTestButton.disabled = false;
+    apiTestButton.textContent = '연결 확인';
+  }
+});
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
 
-  if (IS_STATIC_HOSTING) {
-    setStatus('GitHub Pages는 정적 호스팅이라 Python 크롤러와 Node 서버를 실행할 수 없습니다. 로컬 서버에서 검색해 주세요.', true);
+  const activeApiBase = currentApiBase();
+  if ((IS_STATIC_HOSTING || IS_FILE_MODE) && !activeApiBase) {
+    setStatus('API 서버 주소를 저장한 뒤 검색해 주세요.', true);
     return;
   }
 
@@ -329,12 +471,12 @@ form.addEventListener('submit', async (event) => {
   setStatus(loadingMessage);
 
   try {
-    const response = await fetch(`${API_BASE}/api/search`, {
+    const response = await fetch(`${activeApiBase}/api/search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(true),
       body: JSON.stringify(payload),
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response);
 
     if (!response.ok) {
       throw new Error(data.error || '검색 요청이 실패했습니다.');
@@ -350,9 +492,11 @@ form.addEventListener('submit', async (event) => {
       : '';
     setStatus(`${sourceName} ${tripTypeName}에서 ${data.count}건 수집 완료. CSV 파일이 result 폴더에 저장되었습니다.${failureText}`);
   } catch (error) {
-    const hint = window.location.protocol === 'file:'
-      ? ' 로컬 서버를 켠 뒤 다시 시도하거나 http://127.0.0.1:8080 주소로 열어 주세요.'
-      : '';
+    const hint = IS_STATIC_HOSTING
+      ? ' 맥미니 API 서버 주소, API 키, Cloudflare Tunnel 상태를 확인해 주세요.'
+      : IS_FILE_MODE
+        ? ' 로컬 서버를 켠 뒤 다시 시도하거나 http://127.0.0.1:8080 주소로 열어 주세요.'
+        : '';
     setStatus(`${error.message}${hint}`, true);
     renderLog(error.stack || error.message);
   } finally {
@@ -383,6 +527,7 @@ form.elements.depart.addEventListener('change', syncReturnDateMin);
 form.elements.returnDate.addEventListener('change', validateDateOrder);
 
 applyQueryParams();
+syncApiSettingsUi();
 const initialNotice = setInitialDates();
 syncTripTypeFields();
 if (initialNotice) {

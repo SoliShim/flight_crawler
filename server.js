@@ -10,6 +10,16 @@ const HOST = process.env.HOST || '127.0.0.1';
 const ROOT_DIR = __dirname;
 const RESULT_DIR = path.join(ROOT_DIR, 'result');
 const PYTHON_BIN = process.env.PYTHON_BIN || path.join(ROOT_DIR, '.venv', 'bin', 'python');
+const API_KEY = process.env.API_KEY || '';
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://solishim.github.io',
+  'http://localhost:8080',
+  'http://127.0.0.1:8080',
+];
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS.join(','))
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const ALL_SEARCH_SOURCES = ['naver', 'google', 'trip'];
 const SOURCE_LABELS = {
   naver: '네이버 항공권',
@@ -18,12 +28,26 @@ const SOURCE_LABELS = {
 };
 
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  const origin = req.get('Origin');
+  const originAllowed = !origin || ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin);
+
+  if (originAllowed && origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else if (ALLOWED_ORIGINS.includes('*')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Flight-Crawler-Key');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
 
   if (req.method === 'OPTIONS') {
-    res.sendStatus(204);
+    res.sendStatus(originAllowed ? 204 : 403);
+    return;
+  }
+
+  if (!originAllowed) {
+    res.status(403).json({ error: '허용되지 않은 출처입니다.' });
     return;
   }
 
@@ -33,6 +57,21 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.static(path.join(ROOT_DIR, 'public')));
 app.use('/result', express.static(RESULT_DIR));
+
+function requireApiKey(req, res, next) {
+  if (!API_KEY) {
+    next();
+    return;
+  }
+
+  const providedKey = req.get('X-Flight-Crawler-Key') || '';
+  if (providedKey !== API_KEY) {
+    res.status(401).json({ error: 'API 키가 올바르지 않습니다.' });
+    return;
+  }
+
+  next();
+}
 
 function normalizeAirport(value, fieldName) {
   const airport = String(value || '').trim().toUpperCase();
@@ -340,7 +379,7 @@ function formatRunLog(result) {
   return chunks.filter(Boolean).join('\n');
 }
 
-app.post('/api/search', async (req, res) => {
+app.post('/api/search', requireApiKey, async (req, res) => {
   let baseConfig;
 
   try {
@@ -393,6 +432,15 @@ app.post('/api/search', async (req, res) => {
     elapsedMs: Date.now() - startedAt,
     log,
     failures,
+  });
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'flight-crawler-api',
+    apiKeyRequired: Boolean(API_KEY),
+    sources: ALL_SEARCH_SOURCES,
   });
 });
 

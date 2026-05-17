@@ -94,7 +94,75 @@ result/trip_ICN_TO_TPE_20260518-oneway.csv
 
 이 저장소에는 `public/` 폴더를 GitHub Pages로 배포하는 workflow가 포함되어 있습니다.
 
-GitHub Pages는 정적 호스팅이므로 웹 UI 미리보기만 제공할 수 있습니다. Python 크롤러와 Node 서버는 Pages에서 실행되지 않습니다. 실제 검색 기능은 로컬에서 `npm start`로 서버를 실행하거나 별도의 백엔드 서버에 배포해야 사용할 수 있습니다.
+GitHub Pages는 정적 호스팅이므로 Python 크롤러와 Node 서버를 직접 실행하지 않습니다. 대신 GitHub Pages 화면에서 별도 API 서버 주소를 저장하면, 그 API 서버로 검색 요청을 보내 실제 크롤러를 실행할 수 있습니다.
+
+배포된 화면:
+
+```text
+https://solishim.github.io/flight_crawler/
+```
+
+## 맥미니를 API 서버로 사용
+
+맥미니에서 이 프로젝트 서버를 실행하고, GitHub Pages 화면은 맥미니 API 서버를 호출하는 구조로 사용할 수 있습니다.
+
+### 1. 맥미니에서 서버 실행
+
+`API_KEY`는 임의의 긴 문자열로 정합니다. 이 키는 GitHub에 올리지 않고, GitHub Pages 화면의 API 키 입력칸에만 저장합니다.
+
+```bash
+API_KEY="긴_랜덤_문자열" \
+ALLOWED_ORIGINS="https://solishim.github.io" \
+HOST=127.0.0.1 \
+PORT=8080 \
+npm start
+```
+
+로컬에서 상태 확인:
+
+```bash
+curl http://127.0.0.1:8080/api/health
+```
+
+### 2. Cloudflare Tunnel 연결
+
+GitHub Pages는 HTTPS에서 동작하므로 API 서버도 HTTPS 주소가 필요합니다. Cloudflare Tunnel을 사용하면 공유기 포트포워딩 없이 맥미니의 로컬 서버를 공개 HTTPS 주소로 연결할 수 있습니다.
+
+Cloudflare Tunnel public hostname 예시:
+
+```text
+https://flight-api.yourdomain.com
+```
+
+Tunnel service 설정:
+
+```text
+http://127.0.0.1:8080
+```
+
+Cloudflare Tunnel을 켠 뒤 상태 확인:
+
+```bash
+curl https://flight-api.yourdomain.com/api/health
+```
+
+### 3. GitHub Pages 화면에서 API 설정
+
+GitHub Pages 화면을 열고 `API 서버` 영역에 아래 값을 저장합니다.
+
+```text
+API 서버 주소: https://flight-api.yourdomain.com
+API 키: 맥미니에서 API_KEY로 지정한 값
+```
+
+이 설정은 현재 브라우저의 `localStorage`에만 저장됩니다. 공개 저장소나 GitHub Pages 코드에는 API 키가 저장되지 않습니다.
+
+### 4. API 보호 방식
+
+- `API_KEY` 환경변수가 설정되면 `/api/search`는 `X-Flight-Crawler-Key` 헤더가 일치해야 실행됩니다.
+- `/api/health`는 연결 확인용으로 열려 있습니다.
+- `ALLOWED_ORIGINS`는 브라우저 요청을 허용할 출처입니다. GitHub Pages에서만 쓰려면 `https://solishim.github.io`를 사용합니다.
+- 맥미니가 잠자기 상태가 되면 검색이 실패하므로 절전 설정을 꺼두는 것을 권장합니다.
 
 ## 주의
 

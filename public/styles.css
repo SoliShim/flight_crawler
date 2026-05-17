@@ -164,6 +164,52 @@ input {
   line-height: 1.5;
 }
 
+.api-settings-form {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 14px;
+}
+
+.api-settings-heading,
+.api-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.api-settings-heading div {
+  display: grid;
+  gap: 3px;
+}
+
+.api-settings-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.api-settings-heading strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.api-settings-form input {
+  text-transform: none;
+}
+
+.api-settings-actions {
+  justify-content: flex-start;
+}
+
+.danger-action {
+  color: var(--danger);
+}
+
 .search-form {
   display: grid;
   gap: 16px;
@@ -511,7 +557,9 @@ pre {
 
   .topbar,
   .status-card,
-  .notice {
+  .notice,
+  .api-settings-heading,
+  .api-settings-actions {
     align-items: flex-start;
     flex-direction: column;
   }

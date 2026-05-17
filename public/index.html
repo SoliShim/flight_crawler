@@ -32,6 +32,28 @@
             <p>플랫폼과 여정 방식을 선택한 뒤 가격을 수집합니다.</p>
           </div>
 
+          <form id="api-settings-form" class="api-settings-form">
+            <div class="api-settings-heading">
+              <div>
+                <span>API 서버</span>
+                <strong id="api-settings-status">설정 필요</strong>
+              </div>
+              <button id="api-test-button" class="secondary-action" type="button">연결 확인</button>
+            </div>
+            <label>
+              <span>API 서버 주소</span>
+              <input id="api-base-input" name="apiBase" type="url" placeholder="https://flight-api.example.com" autocomplete="off">
+            </label>
+            <label>
+              <span>API 키</span>
+              <input id="api-key-input" name="apiKey" type="password" placeholder="브라우저에만 저장됩니다" autocomplete="off">
+            </label>
+            <div class="api-settings-actions">
+              <button class="secondary-action" type="submit">저장</button>
+              <button id="api-clear-button" class="secondary-action danger-action" type="button">삭제</button>
+            </div>
+          </form>
+
           <form id="search-form" class="search-form">
             <fieldset class="source-toggle" aria-label="검색 플랫폼">
               <legend>검색 플랫폼</legend>
