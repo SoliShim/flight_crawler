@@ -212,11 +212,12 @@ echo
 echo "3. API 키"
 echo "   $API_KEY"
 echo
-echo "열린 GitHub Pages 화면에서 API 키를 입력하고 저장한 뒤, 연결 확인을 누르세요."
+echo "열린 GitHub Pages 화면에서 API 키를 정확히 입력하고 저장한 뒤, 연결 확인을 누르세요."
+echo "기존 API 키가 저장되어 있었다면 새 터널 주소에서는 입력칸을 비워두도록 처리됩니다."
 echo "이 창을 닫거나 Ctrl-C를 누르면 맥미니 서버와 터널이 종료됩니다."
 echo
 
-if command -v open >/dev/null 2>&1; then
+if [ "${FLIGHT_CRAWLER_OPEN_BROWSER:-1}" != "0" ] && command -v open >/dev/null 2>&1; then
   open "$PAGES_URL?apiBase=$TUNNEL_URL" || true
 fi
 

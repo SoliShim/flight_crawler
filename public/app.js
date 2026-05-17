@@ -27,8 +27,10 @@ const query = new URLSearchParams(window.location.search);
 const API_BASE_STORAGE_KEY = 'flightCrawlerApiBase';
 const API_KEY_STORAGE_KEY = 'flightCrawlerApiKey';
 
-let apiBase = normalizeApiBase(query.get('apiBase') || query.get('api') || localStorage.getItem(API_BASE_STORAGE_KEY) || defaultApiBase());
-let apiKey = localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+const queryApiBase = normalizeApiBase(query.get('apiBase') || query.get('api'));
+const storedApiBase = normalizeApiBase(localStorage.getItem(API_BASE_STORAGE_KEY));
+let apiBase = queryApiBase || storedApiBase || defaultApiBase();
+let apiKey = queryApiBase && queryApiBase !== storedApiBase ? '' : localStorage.getItem(API_KEY_STORAGE_KEY) || '';
 
 function defaultApiBase() {
   if (IS_FILE_MODE) return LOCAL_SERVER;
