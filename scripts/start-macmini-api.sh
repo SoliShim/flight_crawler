@@ -29,6 +29,7 @@ API_KEY="$generated_key"
 ALLOWED_ORIGINS="https://solishim.github.io"
 HOST=127.0.0.1
 PORT=8888
+AUTO_FILL_API_KEY=0
 EOF
   chmod 600 "$CONFIG_FILE"
 }
@@ -46,6 +47,7 @@ API_KEY="${API_KEY:-$(generate_key)}"
 ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-https://solishim.github.io}"
 HOST="${HOST:-127.0.0.1}"
 PREFERRED_PORT="${FLIGHT_CRAWLER_PORT:-${PORT:-8888}}"
+AUTO_FILL_API_KEY="${AUTO_FILL_API_KEY:-0}"
 
 if [ "$PREFERRED_PORT" = "8080" ] && [ "${FLIGHT_CRAWLER_ALLOW_8080:-0}" != "1" ]; then
   PREFERRED_PORT=8888
@@ -190,12 +192,19 @@ if [ -z "$TUNNEL_URL" ]; then
   exit 1
 fi
 
+PAGE_LAUNCH_URL="$PAGES_URL?apiBase=$TUNNEL_URL"
+if [ "$AUTO_FILL_API_KEY" = "1" ]; then
+  ENCODED_API_KEY="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$API_KEY")"
+  PAGE_LAUNCH_URL="$PAGE_LAUNCH_URL#apiKey=$ENCODED_API_KEY"
+fi
+
 cat > "$RUNTIME_FILE" <<EOF
 {
   "apiBase": "$TUNNEL_URL",
   "apiKey": "$API_KEY",
   "localHealthUrl": "$health_url",
-  "pagesUrl": "$PAGES_URL"
+  "pagesUrl": "$PAGES_URL",
+  "autoFillApiKey": "$AUTO_FILL_API_KEY"
 }
 EOF
 chmod 600 "$RUNTIME_FILE"
@@ -204,7 +213,7 @@ echo
 echo "준비가 끝났습니다."
 echo
 echo "1. GitHub Pages 화면"
-echo "   $PAGES_URL?apiBase=$TUNNEL_URL"
+echo "   $PAGE_LAUNCH_URL"
 echo
 echo "2. API 서버 주소"
 echo "   $TUNNEL_URL"
@@ -212,13 +221,18 @@ echo
 echo "3. API 키"
 echo "   $API_KEY"
 echo
-echo "열린 GitHub Pages 화면에서 API 키를 정확히 입력하고 저장한 뒤, 연결 확인을 누르세요."
-echo "기존 API 키가 저장되어 있었다면 새 터널 주소에서는 입력칸을 비워두도록 처리됩니다."
+if [ "$AUTO_FILL_API_KEY" = "1" ]; then
+  echo "자동 입력 모드가 켜져 있어 GitHub Pages 화면에 API 키를 저장한 뒤 주소창에서는 즉시 숨깁니다."
+  echo "열린 GitHub Pages 화면에서 연결 확인을 누르세요."
+else
+  echo "열린 GitHub Pages 화면에서 API 키를 정확히 입력하고 저장한 뒤, 연결 확인을 누르세요."
+  echo "기존 API 키가 저장되어 있었다면 새 터널 주소에서는 입력칸을 비워두도록 처리됩니다."
+fi
 echo "이 창을 닫거나 Ctrl-C를 누르면 맥미니 서버와 터널이 종료됩니다."
 echo
 
 if [ "${FLIGHT_CRAWLER_OPEN_BROWSER:-1}" != "0" ] && command -v open >/dev/null 2>&1; then
-  open "$PAGES_URL?apiBase=$TUNNEL_URL" || true
+  open "$PAGE_LAUNCH_URL" || true
 fi
 
 while true; do
