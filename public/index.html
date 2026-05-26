@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>항공권 가격 수집기</title>
+    <title>Flight Crawler</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
@@ -13,23 +13,47 @@
           <span class="brand-mark" aria-hidden="true">FC</span>
           <div>
             <p>Flight Crawler</p>
-            <h1>항공권 가격 수집기</h1>
+            <h1>저렴한 항공권 찾기</h1>
           </div>
         </div>
         <div class="runtime-chip" id="runtime-chip">대기 중</div>
       </header>
 
+      <section class="goal-strip" aria-label="개발 목표">
+        <div class="goal-item active">
+          <span>1</span>
+          <strong>노선 최저가</strong>
+          <small>특정 공항에서 특정 공항까지</small>
+        </div>
+        <div class="goal-item active">
+          <span>2</span>
+          <strong>여행지 추천</strong>
+          <small>출발지만 정하고 저렴한 곳 찾기</small>
+        </div>
+        <div class="goal-item active">
+          <span>3</span>
+          <strong>저렴한 날짜</strong>
+          <small>노선은 고정하고 날짜를 비교</small>
+        </div>
+      </section>
+
       <section id="file-warning" class="notice hidden" aria-live="polite">
         <strong>서버 실행이 필요합니다.</strong>
         <span id="runtime-warning-text">이 화면은 파일로 열렸습니다. 검색은 로컬 서버가 켜져 있어야 작동합니다.</span>
-        <a href="http://127.0.0.1:8080">서버 화면 열기</a>
+        <a href="http://127.0.0.1:8888">서버 화면 열기</a>
       </section>
 
       <section class="workspace">
         <aside class="control-panel" aria-labelledby="search-title">
           <div class="panel-heading">
-            <h2 id="search-title">검색 조건</h2>
-            <p>플랫폼과 여정 방식을 선택한 뒤 가격을 수집합니다.</p>
+            <h2 id="search-title">검색 실행</h2>
+            <p>목표를 고른 뒤 실제 항공권 사이트를 방문해 가격을 수집합니다.</p>
+          </div>
+
+          <div class="mode-tabs" role="tablist" aria-label="검색 목표">
+            <button class="mode-tab active" type="button" data-mode="route" role="tab" aria-selected="true">노선</button>
+            <button class="mode-tab" type="button" data-mode="explore" role="tab" aria-selected="false">여행지</button>
+            <button class="mode-tab" type="button" data-mode="dates" role="tab" aria-selected="false">날짜</button>
           </div>
 
           <form id="api-settings-form" class="api-settings-form">
@@ -54,16 +78,25 @@
             </div>
           </form>
 
+          <section class="server-guide" aria-labelledby="server-guide-title">
+            <div>
+              <span>서버 상태 확인</span>
+              <strong id="server-guide-title">실행 중인지 점검</strong>
+            </div>
+            <p>서버를 켠 상태에서 새 터미널에 아래 명령을 입력하면 로컬 서버와 터널 연결을 함께 확인합니다.</p>
+            <code>./scripts/check-macmini-api.sh</code>
+          </section>
+
           <form id="search-form" class="search-form">
             <fieldset class="source-toggle" aria-label="검색 플랫폼">
               <legend>검색 플랫폼</legend>
               <label>
                 <input type="radio" name="source" value="naver" checked>
-                <span>네이버 항공권</span>
+                <span>네이버</span>
               </label>
               <label>
                 <input type="radio" name="source" value="google">
-                <span>Google Flights</span>
+                <span>Google</span>
               </label>
               <label>
                 <input type="radio" name="source" value="trip">
@@ -71,7 +104,7 @@
               </label>
               <label>
                 <input type="radio" name="source" value="all">
-                <span>전부 검색하기</span>
+                <span>전부</span>
               </label>
             </fieldset>
 
@@ -92,27 +125,73 @@
                 <span>출발 공항</span>
                 <input name="dep3" value="ICN" maxlength="3" autocomplete="off" required>
               </label>
-              <label>
+              <label class="mode-field route-field dates-field">
                 <span>도착 공항</span>
-                <input name="arr3" value="TPE" maxlength="3" autocomplete="off" required>
+                <input name="arr3" value="TPE" maxlength="3" autocomplete="off">
               </label>
             </div>
 
-            <div class="field-row">
+            <div class="mode-field route-field explore-field">
+              <div class="field-row">
+                <label>
+                  <span>출발일</span>
+                  <input name="depart" type="date">
+                </label>
+                <label id="return-date-field">
+                  <span>복귀일</span>
+                  <input name="returnDate" type="date">
+                </label>
+              </div>
+            </div>
+
+            <div class="mode-field explore-field">
               <label>
-                <span>출발일</span>
-                <input name="depart" type="date" required>
+                <span>추천 후보 공항</span>
+                <textarea name="destinations" rows="3" placeholder="비워두면 기본 후보를 사용합니다. 예: NRT KIX TPE BKK SIN"></textarea>
               </label>
-              <label id="return-date-field">
-                <span>복귀일</span>
-                <input name="returnDate" type="date" required>
-              </label>
+              <div class="field-row compact-row">
+                <label>
+                  <span>추천 후보 수</span>
+                  <input name="limit" type="number" value="8" min="1" max="20">
+                </label>
+                <label>
+                  <span>후보별 수집 개수</span>
+                  <input name="exploreItems" type="number" value="3" min="1" max="20">
+                </label>
+              </div>
+            </div>
+
+            <div class="mode-field dates-field">
+              <div class="field-row">
+                <label>
+                  <span>검사 시작일</span>
+                  <input name="startDate" type="date">
+                </label>
+                <label>
+                  <span>검사 종료일</span>
+                  <input name="endDate" type="date">
+                </label>
+              </div>
+              <div class="field-row compact-row">
+                <label>
+                  <span>여행 기간</span>
+                  <input name="durationDays" type="number" value="3" min="1" max="30">
+                </label>
+                <label>
+                  <span>검사 날짜 수</span>
+                  <input name="maxDates" type="number" value="10" min="1" max="31">
+                </label>
+              </div>
             </div>
 
             <div class="field-row compact-row">
-              <label>
+              <label class="mode-field route-field">
                 <span>수집 개수</span>
-                <input name="items" type="number" value="10" min="1" max="100" required>
+                <input name="items" type="number" value="10" min="1" max="100">
+              </label>
+              <label class="mode-field dates-field">
+                <span>날짜별 수집 개수</span>
+                <input name="dateItems" type="number" value="3" min="1" max="20">
               </label>
               <label class="checkbox-field">
                 <input name="headless" type="checkbox" checked>
@@ -123,7 +202,7 @@
               </label>
             </div>
 
-            <button id="submit-button" class="primary-action" type="submit">가격 수집 시작</button>
+            <button id="submit-button" class="primary-action" type="submit">노선 최저가 찾기</button>
           </form>
         </aside>
 
@@ -131,25 +210,37 @@
           <div class="status-card" aria-live="polite">
             <div>
               <span class="section-label">상태</span>
-              <p id="status-text">조건을 입력하고 수집을 시작하세요.</p>
+              <p id="status-text">목표를 선택하고 검색을 시작하세요.</p>
             </div>
             <a id="download-link" class="download-link hidden" href="#" download>CSV 다운로드</a>
           </div>
 
+          <section class="best-panel">
+            <div class="results-header">
+              <div>
+                <span class="section-label">최저가 요약</span>
+                <h2 id="summary-title">아직 실행 전입니다</h2>
+              </div>
+              <span id="result-count">0건</span>
+            </div>
+            <div id="best-grid" class="best-grid">
+              <div class="empty-state">검색 결과가 생기면 가장 저렴한 항공권과 비교 후보가 여기에 표시됩니다.</div>
+            </div>
+          </section>
+
           <section class="results-panel">
             <div class="results-header">
               <div>
-                <span class="section-label">검색 결과</span>
-                <h2>수집된 항공권</h2>
+                <span class="section-label">상세 결과</span>
+                <h2>가격 비교표</h2>
               </div>
-              <span id="result-count">0건</span>
             </div>
 
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>플랫폼</th>
+                    <th id="primary-header">구분</th>
                     <th>가격</th>
                     <th>항공사</th>
                     <th>가는 편</th>

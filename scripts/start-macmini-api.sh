@@ -221,6 +221,9 @@ echo
 echo "3. API 키"
 echo "   $API_KEY"
 echo
+echo "4. 실행 상태 확인"
+echo "   ./scripts/check-macmini-api.sh"
+echo
 if [ "$AUTO_FILL_API_KEY" = "1" ]; then
   echo "자동 입력 모드가 켜져 있어 GitHub Pages 화면에 API 키를 저장한 뒤 주소창에서는 즉시 숨깁니다."
   echo "열린 GitHub Pages 화면에서 연결 확인을 누르세요."

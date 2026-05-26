@@ -133,6 +133,18 @@ GitHub Pages 화면이 열리면 터미널에 표시된 `API 키`를 입력하�
 
 새 터널 주소로 열릴 때는 이전에 브라우저에 저장된 API 키를 자동으로 비워 둡니다. 터미널에 표시된 현재 API 키를 다시 입력해 저장하세요.
 
+서버가 실제로 실행 중인지 확인하려면, 서버를 실행한 상태에서 새 터미널을 열고 아래 명령을 실행합니다.
+
+```bash
+./scripts/check-macmini-api.sh
+```
+
+이 명령은 `.flight-crawler.runtime.json`에 저장된 로컬 서버 주소와 Cloudflare 터널 주소의 `/api/health` 응답을 함께 확인합니다. 특정 터널 주소를 직접 확인하려면 아래처럼 주소를 붙여 실행합니다.
+
+```bash
+./scripts/check-macmini-api.sh https://example.trycloudflare.com
+```
+
 API 키 자동 입력을 켜고 싶으면 `.flight-crawler.local.env`에 아래 줄을 추가하거나 값을 바꿉니다.
 
 ```bash

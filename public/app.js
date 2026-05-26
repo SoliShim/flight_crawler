@@ -11,12 +11,17 @@ const fileWarning = document.querySelector('#file-warning');
 const runtimeWarningText = document.querySelector('#runtime-warning-text');
 const returnDateField = document.querySelector('#return-date-field');
 const inboundHeader = document.querySelector('#inbound-header');
+const primaryHeader = document.querySelector('#primary-header');
+const summaryTitle = document.querySelector('#summary-title');
+const bestGrid = document.querySelector('#best-grid');
 const apiSettingsForm = document.querySelector('#api-settings-form');
 const apiBaseInput = document.querySelector('#api-base-input');
 const apiKeyInput = document.querySelector('#api-key-input');
 const apiSettingsStatus = document.querySelector('#api-settings-status');
 const apiTestButton = document.querySelector('#api-test-button');
 const apiClearButton = document.querySelector('#api-clear-button');
+const modeTabs = [...document.querySelectorAll('.mode-tab')];
+const modeFields = [...document.querySelectorAll('.mode-field')];
 
 const LOCAL_SERVER = 'http://127.0.0.1:8888';
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
@@ -24,15 +29,26 @@ const IS_LOCAL_SERVER = LOCAL_HOSTS.has(window.location.hostname);
 const IS_FILE_MODE = window.location.protocol === 'file:';
 const IS_STATIC_HOSTING = !IS_FILE_MODE && !IS_LOCAL_SERVER;
 const query = new URLSearchParams(window.location.search);
+const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
 const API_BASE_STORAGE_KEY = 'flightCrawlerApiBase';
 const API_KEY_STORAGE_KEY = 'flightCrawlerApiKey';
+const MODE_LABELS = {
+  route: '노선 최저가',
+  explore: '여행지 추천',
+  dates: '저렴한 날짜',
+};
+const SUBMIT_LABELS = {
+  route: '노선 최저가 찾기',
+  explore: '저렴한 여행지 추천받기',
+  dates: '가장 저렴한 날짜 찾기',
+};
 
 const queryApiBase = normalizeApiBase(query.get('apiBase') || query.get('api'));
 const storedApiBase = normalizeApiBase(localStorage.getItem(API_BASE_STORAGE_KEY));
-const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
 const fragmentApiKey = String(fragment.get('apiKey') || '').trim();
 let apiBase = queryApiBase || storedApiBase || defaultApiBase();
 let apiKey = fragmentApiKey || (queryApiBase && queryApiBase !== storedApiBase ? '' : localStorage.getItem(API_KEY_STORAGE_KEY) || '');
+let currentMode = ['route', 'explore', 'dates'].includes(query.get('mode')) ? query.get('mode') : 'route';
 
 if (queryApiBase) {
   localStorage.setItem(API_BASE_STORAGE_KEY, queryApiBase);
@@ -92,37 +108,46 @@ function todayInputDate() {
   return toInputDate(new Date());
 }
 
-function tomorrowInputDate() {
-  return toInputDate(addDays(new Date(), 1));
-}
-
 function sanitizeInputDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : '';
 }
 
+function displayDate(value) {
+  const text = String(value || '');
+  if (/^\d{8}$/.test(text)) {
+    return `${text.slice(0, 4)}.${text.slice(4, 6)}.${text.slice(6, 8)}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text.replaceAll('-', '.');
+  }
+  return text || '-';
+}
+
 function setInitialDates() {
   const today = todayInputDate();
-  const defaultDepart = tomorrowInputDate();
-  const defaultReturn = toInputDate(addDays(new Date(), 2));
+  const defaultDepart = toInputDate(addDays(new Date(), 1));
+  const defaultReturn = toInputDate(addDays(new Date(), 4));
+  const defaultEnd = toInputDate(addDays(new Date(), 14));
   const queryDepart = sanitizeInputDate(query.get('depart'));
   const queryReturn = sanitizeInputDate(query.get('returnDate'));
   let notice = '';
 
-  form.elements.depart.min = today;
+  for (const input of [form.elements.depart, form.elements.startDate]) {
+    input.min = today;
+  }
+
   form.elements.depart.value = queryDepart || defaultDepart;
-
-  if (form.elements.depart.value < today) {
-    form.elements.depart.value = defaultDepart;
-    notice = 'URL의 출발일이 지난 날짜라 기본 날짜로 조정했습니다.';
-  }
-
   form.elements.returnDate.value = queryReturn || defaultReturn;
-  if (form.elements.returnDate.value <= form.elements.depart.value) {
-    form.elements.returnDate.value = toInputDate(addDays(new Date(`${form.elements.depart.value}T00:00:00`), 1));
-    notice = notice || '복귀일이 출발일보다 늦도록 자동 조정했습니다.';
+  form.elements.startDate.value = sanitizeInputDate(query.get('startDate')) || defaultDepart;
+  form.elements.endDate.value = sanitizeInputDate(query.get('endDate')) || defaultEnd;
+
+  if (form.elements.depart.value < today || form.elements.startDate.value < today) {
+    form.elements.depart.value = defaultDepart;
+    form.elements.startDate.value = defaultDepart;
+    notice = 'URL의 지난 날짜를 기본 날짜로 조정했습니다.';
   }
 
-  syncReturnDateMin();
+  syncDateRules();
   return notice;
 }
 
@@ -144,9 +169,23 @@ function applyQueryParams() {
     }
   }
 
-  const items = Number(query.get('items'));
-  if (Number.isInteger(items) && items >= 1 && items <= 100) {
-    form.elements.items.value = String(items);
+  for (const [name, min, max] of [
+    ['items', 1, 100],
+    ['exploreItems', 1, 20],
+    ['dateItems', 1, 20],
+    ['limit', 1, 20],
+    ['durationDays', 1, 30],
+    ['maxDates', 1, 31],
+  ]) {
+    const value = Number(query.get(name));
+    if (Number.isInteger(value) && value >= min && value <= max) {
+      form.elements[name].value = String(value);
+    }
+  }
+
+  const destinations = String(query.get('destinations') || '').trim().toUpperCase();
+  if (destinations) {
+    form.elements.destinations.value = destinations;
   }
 
   const headless = query.get('headless');
@@ -155,48 +194,12 @@ function applyQueryParams() {
   }
 }
 
-function validateDepartDate() {
-  const depart = form.elements.depart.value;
-  const today = todayInputDate();
-  const message = depart && depart < today
-    ? '출발일은 오늘보다 빠를 수 없습니다.'
-    : '';
-
-  form.elements.depart.setCustomValidity(message);
-  return !message;
-}
-
-function syncReturnDateMin() {
-  const depart = form.elements.depart.value;
-  const returnDate = form.elements.returnDate;
-
-  returnDate.min = depart || '';
-  validateDepartDate();
-  validateDateOrder();
-}
-
-function validateDateOrder() {
-  if (selectedTripType() === 'oneway') {
-    form.elements.returnDate.setCustomValidity('');
-    return true;
-  }
-
-  const depart = form.elements.depart.value;
-  const returnDate = form.elements.returnDate.value;
-  const message = depart && returnDate && depart >= returnDate
-    ? '복귀일은 출발일보다 늦어야 합니다.'
-    : '';
-
-  form.elements.returnDate.setCustomValidity(message);
-  return !message;
-}
-
 function selectedSourceName() {
   const names = {
-    naver: '네이버 항공권',
+    naver: '네이버',
     google: 'Google Flights',
     trip: 'Trip.com',
-    all: '전부 검색하기',
+    all: '전부 검색',
   };
   return names[form.elements.source.value] || names.naver;
 }
@@ -214,6 +217,7 @@ function sourceLabel(source) {
     naver: '네이버',
     google: 'Google',
     trip: 'Trip.com',
+    all: '전부',
   };
   return labels[source] || source || '-';
 }
@@ -234,13 +238,14 @@ function syncApiSettingsUi() {
 function updateRuntimeState() {
   const sourceName = selectedSourceName();
   const tripTypeName = selectedTripTypeName();
+  const modeName = MODE_LABELS[currentMode];
   const activeApiBase = currentApiBase();
 
   if (IS_FILE_MODE) {
     runtimeChip.textContent = '파일 모드';
     runtimeWarningText.textContent = '이 화면은 파일로 열렸습니다. 검색은 로컬 서버 또는 API 서버가 켜져 있어야 작동합니다.';
     fileWarning.classList.remove('hidden');
-    setStatus(`${sourceName} ${tripTypeName} 검색 준비 완료. 검색하려면 API 서버가 실행 중이어야 합니다.`);
+    setStatus(`${modeName} 준비 완료. ${sourceName} ${tripTypeName} 검색을 실행하려면 API 서버가 필요합니다.`);
     return;
   }
 
@@ -249,7 +254,7 @@ function updateRuntimeState() {
       runtimeChip.textContent = '원격 API 설정됨';
       runtimeWarningText.textContent = `GitHub Pages 화면에서 ${activeApiBase} API 서버로 검색합니다.`;
       fileWarning.classList.remove('hidden');
-      setStatus(`${sourceName} ${tripTypeName} 검색 준비 완료. 맥미니 API 서버가 실행 중이어야 합니다.`);
+      setStatus(`${modeName} 준비 완료. 맥미니 API 서버가 실행 중이어야 합니다.`);
       return;
     }
 
@@ -262,22 +267,79 @@ function updateRuntimeState() {
 
   runtimeChip.textContent = '서버 연결됨';
   fileWarning.classList.add('hidden');
-  setStatus(`${sourceName} ${tripTypeName} 검색 준비 완료.`);
+  setStatus(`${modeName} 준비 완료. ${sourceName} ${tripTypeName}으로 검색합니다.`);
 }
 
-function syncTripTypeFields() {
-  const isOneWay = selectedTripType() === 'oneway';
-  form.elements.returnDate.required = !isOneWay;
-  form.elements.returnDate.disabled = isOneWay;
-  returnDateField.classList.toggle('return-date-disabled', isOneWay);
-  inboundHeader.textContent = isOneWay ? '비고' : '오는 편';
-  validateDateOrder();
+function setMode(mode) {
+  currentMode = mode;
+  modeTabs.forEach((tab) => {
+    const active = tab.dataset.mode === mode;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  modeFields.forEach((field) => {
+    const visible = field.classList.contains(`${mode}-field`);
+    field.classList.toggle('is-hidden', !visible);
+  });
+
+  submitButton.textContent = SUBMIT_LABELS[mode];
+  primaryHeader.textContent = mode === 'explore' ? '여행지' : mode === 'dates' ? '날짜' : '플랫폼';
+  summaryTitle.textContent = `${MODE_LABELS[mode]} 결과`;
+  downloadLink.classList.add('hidden');
+  renderRows([]);
+  renderBest([]);
+  syncRequiredFields();
+  syncDateRules();
   updateRuntimeState();
+}
+
+function syncRequiredFields() {
+  const isRoute = currentMode === 'route';
+  const isExplore = currentMode === 'explore';
+  const isDates = currentMode === 'dates';
+  const isRoundtrip = selectedTripType() === 'roundtrip';
+
+  form.elements.arr3.required = isRoute || isDates;
+  form.elements.depart.required = isRoute || isExplore;
+  form.elements.returnDate.required = (isRoute || isExplore) && isRoundtrip;
+  form.elements.startDate.required = isDates;
+  form.elements.endDate.required = isDates;
+  form.elements.returnDate.disabled = !((isRoute || isExplore) && isRoundtrip);
+  returnDateField.classList.toggle('return-date-disabled', !isRoundtrip);
+  inboundHeader.textContent = isRoundtrip ? '오는 편' : '비고';
+}
+
+function syncDateRules() {
+  const today = todayInputDate();
+  const depart = form.elements.depart.value;
+  const startDate = form.elements.startDate.value;
+
+  form.elements.depart.min = today;
+  form.elements.startDate.min = today;
+  form.elements.returnDate.min = depart || today;
+  form.elements.endDate.min = startDate || today;
+  validateDates();
+}
+
+function validateDates() {
+  const today = todayInputDate();
+  const tripType = selectedTripType();
+  const depart = form.elements.depart.value;
+  const returnDate = form.elements.returnDate.value;
+  const startDate = form.elements.startDate.value;
+  const endDate = form.elements.endDate.value;
+
+  form.elements.depart.setCustomValidity(depart && depart < today ? '출발일은 오늘보다 빠를 수 없습니다.' : '');
+  form.elements.startDate.setCustomValidity(startDate && startDate < today ? '시작일은 오늘보다 빠를 수 없습니다.' : '');
+  form.elements.returnDate.setCustomValidity(tripType === 'roundtrip' && depart && returnDate && depart >= returnDate ? '복귀일은 출발일보다 늦어야 합니다.' : '');
+  form.elements.endDate.setCustomValidity(startDate && endDate && startDate > endDate ? '종료일은 시작일보다 늦거나 같아야 합니다.' : '');
+
+  return form.checkValidity();
 }
 
 function setLoading(isLoading) {
   submitButton.disabled = isLoading;
-  submitButton.textContent = isLoading ? '수집 중...' : '가격 수집 시작';
+  submitButton.textContent = isLoading ? '수집 중...' : SUBMIT_LABELS[currentMode];
 }
 
 function setStatus(message, isError = false) {
@@ -287,7 +349,7 @@ function setStatus(message, isError = false) {
 
 function formatPrice(value) {
   if (String(value || '').includes('$')) return value;
-  const number = Number(String(value || '').replace(/,/g, ''));
+  const number = Number(String(value || '').replace(/[^\d.]/g, ''));
   if (!Number.isFinite(number)) return value || '-';
   return `${number.toLocaleString('ko-KR')}원`;
 }
@@ -334,19 +396,72 @@ function renderRows(rows) {
   resultCount.textContent = `${rows.length}건`;
 
   if (!rows.length) {
-    resultsBody.innerHTML = '<tr><td colspan="5" class="empty-cell">수집된 결과가 없습니다.</td></tr>';
+    resultsBody.innerHTML = '<tr><td colspan="5" class="empty-cell">아직 수집된 결과가 없습니다.</td></tr>';
     return;
   }
 
-  resultsBody.innerHTML = rows.map((row) => `
-    <tr>
-      <td><span class="source-badge">${escapeHtml(sourceLabel(row.source))}</span></td>
-      <td class="price">${priceCell(row)}</td>
-      <td>${escapeHtml(row.airline || '-')}</td>
-      <td class="route">${escapeHtml(routeText(row, 'outbound'))}</td>
-      <td class="route">${escapeHtml(routeText(row, 'inbound'))}</td>
-    </tr>
-  `).join('');
+  if (currentMode === 'route') {
+    resultsBody.innerHTML = rows.map((row) => `
+      <tr>
+        <td><span class="source-badge">${escapeHtml(sourceLabel(row.source))}</span></td>
+        <td class="price">${priceCell(row)}</td>
+        <td>${escapeHtml(row.airline || '-')}</td>
+        <td class="route">${escapeHtml(routeText(row, 'outbound'))}</td>
+        <td class="route">${escapeHtml(routeText(row, 'inbound'))}</td>
+      </tr>
+    `).join('');
+    return;
+  }
+
+  resultsBody.innerHTML = rows.map((row) => {
+    const primary = currentMode === 'explore'
+      ? `${row.destination || row.arr3 || '-'}`
+      : `${displayDate(row.depart)}${row.returnDate ? ` - ${displayDate(row.returnDate)}` : ''}`;
+    const inbound = row.inbound || row.status || '-';
+
+    return `
+      <tr>
+        <td><span class="source-badge">${escapeHtml(primary)}</span></td>
+        <td class="price">${priceCell(row)}</td>
+        <td>${escapeHtml(row.airline || row.status || '-')}</td>
+        <td class="route">${escapeHtml(row.outbound || '-')}</td>
+        <td class="route">${escapeHtml(inbound)}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderBest(rows) {
+  const pricedRows = rows.filter((row) => Number.isFinite(Number(row.priceAmount)) || row.price);
+  const bestRows = currentMode === 'route' ? rows.slice(0, 3) : pricedRows.slice(0, 3);
+
+  if (!bestRows.length) {
+    bestGrid.innerHTML = '<div class="empty-state">검색 결과가 생기면 가장 저렴한 항공권과 비교 후보가 여기에 표시됩니다.</div>';
+    return;
+  }
+
+  bestGrid.innerHTML = bestRows.map((row, index) => {
+    const title = currentMode === 'route'
+      ? `${sourceLabel(row.source)} ${index + 1}위`
+      : currentMode === 'explore'
+        ? row.destination || row.arr3 || `${index + 1}위`
+        : `${displayDate(row.depart)} 출발`;
+    const meta = currentMode === 'route'
+      ? `${form.elements.dep3.value.toUpperCase()} -> ${form.elements.arr3.value.toUpperCase()}`
+      : currentMode === 'explore'
+        ? `${form.elements.dep3.value.toUpperCase()} -> ${row.arr3 || ''}`
+        : `${form.elements.dep3.value.toUpperCase()} -> ${form.elements.arr3.value.toUpperCase()}`;
+    const route = currentMode === 'route' ? routeText(row, 'outbound') : row.outbound;
+
+    return `
+      <article class="best-card">
+        <span>${escapeHtml(meta)}</span>
+        <strong>${escapeHtml(title)}</strong>
+        <p class="best-price">${priceCell(row)}</p>
+        <small>${escapeHtml(row.airline || route || '-')}</small>
+      </article>
+    `;
+  }).join('');
 }
 
 function renderLog(log) {
@@ -365,6 +480,63 @@ async function readJsonResponse(response) {
   } catch {
     return {};
   }
+}
+
+function splitDestinations(value) {
+  return String(value || '')
+    .toUpperCase()
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildPayload() {
+  const base = {
+    source: form.elements.source.value,
+    tripType: selectedTripType(),
+    dep3: form.elements.dep3.value,
+    headless: form.elements.headless.checked,
+  };
+
+  if (currentMode === 'route') {
+    return {
+      endpoint: '/api/search',
+      payload: {
+        ...base,
+        arr3: form.elements.arr3.value,
+        depart: toYYYYMMDD(form.elements.depart.value),
+        returnDate: selectedTripType() === 'roundtrip' ? toYYYYMMDD(form.elements.returnDate.value) : '',
+        items: Number(form.elements.items.value),
+      },
+    };
+  }
+
+  if (currentMode === 'explore') {
+    return {
+      endpoint: '/api/explore',
+      payload: {
+        ...base,
+        depart: toYYYYMMDD(form.elements.depart.value),
+        returnDate: selectedTripType() === 'roundtrip' ? toYYYYMMDD(form.elements.returnDate.value) : '',
+        destinations: splitDestinations(form.elements.destinations.value),
+        limit: Number(form.elements.limit.value),
+        items: Number(form.elements.exploreItems.value),
+      },
+    };
+  }
+
+  return {
+    endpoint: '/api/cheapest-dates',
+    payload: {
+      ...base,
+      arr3: form.elements.arr3.value,
+      startDate: toYYYYMMDD(form.elements.startDate.value),
+      endDate: toYYYYMMDD(form.elements.endDate.value),
+      durationDays: Number(form.elements.durationDays.value),
+      maxDates: Number(form.elements.maxDates.value),
+      items: Number(form.elements.dateItems.value),
+    },
+  };
 }
 
 apiSettingsForm.addEventListener('submit', (event) => {
@@ -431,7 +603,7 @@ apiTestButton.addEventListener('click', async () => {
 
     setStatus(data.apiKeyRequired && !apiKey
       ? 'API 서버는 연결됐지만 검색하려면 API 키가 필요합니다.'
-      : 'API 서버 연결이 정상입니다.');
+      : `API 서버 연결이 정상입니다. 사용 가능한 소스: ${(data.sources || []).map(sourceLabel).join(', ')}`);
   } catch (error) {
     setStatus(`${error.message} Cloudflare Tunnel 주소와 맥미니 서버 실행 상태를 확인해 주세요.`, true);
   } finally {
@@ -449,42 +621,30 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
-  const payload = {
-    source: form.elements.source.value,
-    tripType: selectedTripType(),
-    dep3: form.elements.dep3.value,
-    arr3: form.elements.arr3.value,
-    depart: toYYYYMMDD(form.elements.depart.value),
-    returnDate: selectedTripType() === 'roundtrip' ? toYYYYMMDD(form.elements.returnDate.value) : '',
-    items: Number(form.elements.items.value),
-    headless: form.elements.headless.checked,
-  };
-
-  if (!validateDepartDate()) {
-    form.reportValidity();
-    setStatus('출발일은 오늘보다 빠를 수 없습니다.', true);
+  syncRequiredFields();
+  if (!validateDates() || !form.reportValidity()) {
+    setStatus('입력한 검색 조건을 다시 확인해 주세요.', true);
     return;
   }
 
-  if (!validateDateOrder()) {
-    form.reportValidity();
-    setStatus('복귀일은 출발일보다 늦어야 합니다.', true);
-    return;
-  }
-
+  const { endpoint, payload } = buildPayload();
   downloadLink.classList.add('hidden');
   renderRows([]);
+  renderBest([]);
   renderLog('');
   setLoading(true);
+
   const sourceName = selectedSourceName();
   const tripTypeName = selectedTripTypeName();
-  const loadingMessage = payload.source === 'all'
-    ? `네이버 항공권, Google Flights, Trip.com ${tripTypeName} 항공권을 동시에 조회하고 있습니다. 보통 30초 이상 걸립니다.`
-    : `브라우저를 열어 ${sourceName} ${tripTypeName} 항공권을 조회하고 있습니다. 보통 20초 이상 걸립니다.`;
-  setStatus(loadingMessage);
+  const loadingMessages = {
+    route: `${sourceName}에서 ${tripTypeName} 항공권을 조회하고 있습니다. 보통 20초 이상 걸립니다.`,
+    explore: `여러 여행지 후보를 순서대로 조회하고 있습니다. 후보 수가 많으면 몇 분 걸릴 수 있습니다.`,
+    dates: `여러 날짜 후보를 순서대로 조회하고 있습니다. 검사 날짜 수가 많으면 몇 분 걸릴 수 있습니다.`,
+  };
+  setStatus(loadingMessages[currentMode]);
 
   try {
-    const response = await fetch(`${activeApiBase}/api/search`, {
+    const response = await fetch(`${activeApiBase}${endpoint}`, {
       method: 'POST',
       headers: apiHeaders(true),
       body: JSON.stringify(payload),
@@ -495,15 +655,14 @@ form.addEventListener('submit', async (event) => {
       throw new Error(data.error || '검색 요청이 실패했습니다.');
     }
 
-    renderRows(data.rows || []);
+    const rows = data.rows || [];
+    renderRows(rows);
+    renderBest(rows);
     renderLog(data.log || '');
     downloadLink.href = absoluteDownloadUrl(data.downloadUrl);
     downloadLink.download = data.filename;
     downloadLink.classList.remove('hidden');
-    const failureText = data.failures?.length
-      ? ` 일부 실패: ${data.failures.map((failure) => failure.label).join(', ')}`
-      : '';
-    setStatus(`${sourceName} ${tripTypeName}에서 ${data.count}건 수집 완료. CSV 파일이 result 폴더에 저장되었습니다.${failureText}`);
+    setStatus(`${MODE_LABELS[currentMode]}에서 ${data.count}건 수집 완료. CSV 파일이 result 폴더에 저장되었습니다.`);
   } catch (error) {
     const hint = IS_STATIC_HOSTING
       ? ' 맥미니 API 서버 주소, API 키, Cloudflare Tunnel 상태를 확인해 주세요.'
@@ -533,16 +692,25 @@ for (const input of form.elements.source) {
 }
 
 for (const input of form.elements.tripType) {
-  input.addEventListener('change', syncTripTypeFields);
+  input.addEventListener('change', () => {
+    syncRequiredFields();
+    syncDateRules();
+    updateRuntimeState();
+  });
 }
 
-form.elements.depart.addEventListener('change', syncReturnDateMin);
-form.elements.returnDate.addEventListener('change', validateDateOrder);
+for (const input of [form.elements.depart, form.elements.returnDate, form.elements.startDate, form.elements.endDate]) {
+  input.addEventListener('change', syncDateRules);
+}
+
+modeTabs.forEach((tab) => {
+  tab.addEventListener('click', () => setMode(tab.dataset.mode));
+});
 
 applyQueryParams();
 syncApiSettingsUi();
 const initialNotice = setInitialDates();
-syncTripTypeFields();
+setMode(currentMode);
 if (initialNotice) {
   setStatus(initialNotice);
 }
